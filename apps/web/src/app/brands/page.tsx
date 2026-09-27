@@ -98,23 +98,30 @@ function BrandDirectoryClient({ brands }: { brands: PublicBrand[] }) {
         >
           All
         </button>
-        {ALPHABET.map((letter) => (
-          <button
-            key={letter}
-            onClick={() => setActiveLetter(activeLetter === letter ? null : letter)}
-            disabled={!usedLetters.has(letter)}
-            className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${
-              activeLetter === letter
-                ? "bg-[var(--primary)] text-white"
-                : usedLetters.has(letter)
-                  ? "bg-[var(--muted)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-                  : "cursor-not-allowed text-[var(--muted-foreground)]/40"
-            }`}
-            aria-label={`Jump to brands starting with ${letter}`}
-          >
-            {letter}
-          </button>
-        ))}
+        {ALPHABET.map((letter) => {
+          const isUsed = usedLetters.has(letter);
+          const labelText = isUsed
+            ? `Jump to brands starting with ${letter}`
+            : `No brands starting with ${letter}`;
+          return (
+            <button
+              key={letter}
+              onClick={() => setActiveLetter(activeLetter === letter ? null : letter)}
+              disabled={!isUsed}
+              title={labelText}
+              aria-label={labelText}
+              className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${
+                activeLetter === letter
+                  ? "bg-[var(--primary)] text-white"
+                  : isUsed
+                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
+                    : "cursor-not-allowed text-[var(--muted-foreground)]/40"
+              }`}
+            >
+              {letter}
+            </button>
+          );
+        })}
       </nav>
 
       {filtered.length === 0 ? (

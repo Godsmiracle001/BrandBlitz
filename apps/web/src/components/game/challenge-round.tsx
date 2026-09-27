@@ -178,7 +178,7 @@ export function ChallengeRound({
           role="alert"
           className="mt-4 rounded-md border border-red-500/50 bg-red-500/10 p-4 text-sm"
         >
-          <p className="text-red-500">Failed to submit answer: {answerError}</p>
+          <p className="text-red-500">Could not submit your answer. Check your connection and try again.</p>
           {onRetry && (
             <Button type="button" variant="outline" size="sm" className="mt-2" onClick={onRetry}>
               Retry

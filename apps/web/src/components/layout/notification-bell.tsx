@@ -59,6 +59,7 @@ export function NotificationBell({ apiToken }: NotificationBellProps) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [toastQueue, setToastQueue] = useState<Notification[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(5);
   const seenIds = useRef<Set<string>>(new Set());
   const drawerRef = useRef<HTMLDivElement>(null);
 
@@ -204,7 +205,7 @@ export function NotificationBell({ apiToken }: NotificationBellProps) {
                   No notifications yet
                 </p>
               ) : (
-                notifications.map((n) => (
+                notifications.slice(0, visibleCount).map((n) => (
                   <div
                     key={n.id}
                     className={`flex items-start gap-3 border-b border-[var(--border)] px-4 py-3 last:border-0 transition-colors ${
@@ -236,6 +237,30 @@ export function NotificationBell({ apiToken }: NotificationBellProps) {
                 ))
               )}
             </div>
+
+            {notifications.length > 0 && (
+              <div className="border-t border-[var(--border)] px-4 py-2.5 bg-[var(--muted)]/20 flex items-center justify-between text-xs text-[var(--muted-foreground)]">
+                {notifications.length > visibleCount ? (
+                  <>
+                    <span>
+                      Showing {Math.min(visibleCount, notifications.length)} of {notifications.length}
+                    </span>
+                    <button
+                      onClick={() => setVisibleCount((prev) => prev + 5)}
+                      className="font-medium text-[var(--primary)] hover:underline focus:outline-none"
+                    >
+                      Load older
+                    </button>
+                  </>
+                ) : (
+                  <span className="w-full text-center py-0.5">
+                    {notifications.length >= 50
+                      ? "Showing 50 most recent notifications"
+                      : "All notifications loaded"}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

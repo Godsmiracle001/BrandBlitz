@@ -238,17 +238,18 @@ describe("ChallengeRound", () => {
   // ── #154 — answer-submission error UX ────────────────────────────────────
 
   describe("answer-error surfacing (#154)", () => {
-    it("renders the inline error banner when answerError is set", () => {
+    it("renders the inline friendly error banner when answerError is set and hides raw error details", () => {
       render(
         <ChallengeRound
           question={buildQuestion()}
           round={1}
           onAnswer={vi.fn()}
-          answerError="network blip"
+          answerError="500 Internal Server Error: ERR_CONN_REFUSED"
         />,
       );
       expect(screen.getByRole("alert")).toBeInTheDocument();
-      expect(screen.getByText(/network blip/i)).toBeInTheDocument();
+      expect(screen.getByText(/Could not submit your answer/i)).toBeInTheDocument();
+      expect(screen.queryByText(/500 Internal Server Error/i)).not.toBeInTheDocument();
     });
 
     it("does not render the banner when answerError is null/undefined", () => {

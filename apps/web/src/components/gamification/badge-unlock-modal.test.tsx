@@ -32,10 +32,12 @@ describe("BadgeUnlockModal", () => {
     expect(screen.getByText("You won your first challenge!")).toBeTruthy();
   });
 
-  it("share link uses correct badge name", () => {
+  it("share link uses correct badge name and product name", () => {
     render(<BadgeUnlockModal badges={[badge1]} onClose={() => {}} />);
     const link = screen.getByRole("link", { name: /Share on X/i });
     expect(link.getAttribute("href")).toContain(encodeURIComponent("First Win"));
+    expect(link.getAttribute("href")).toContain("BrandBlitz!");
+    expect(link.getAttribute("href")).not.toContain("StreamFi!");
     expect(link.getAttribute("href")).toContain("x.com/intent/tweet");
   });
 

@@ -110,6 +110,7 @@ describe("WarmupPhase", () => {
 
     expect(screen.getByText("0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start Challenge →" })).toBeEnabled();
+    expect(screen.getByText(/Ready!/i)).toBeInTheDocument();
   });
 
   it("posts warmup completion and invokes onComplete with the challenge token", async () => {
@@ -217,34 +218,37 @@ describe("WarmupPhase", () => {
   });
 
   it("start button is disabled when countdown is paused due to visibility change", async () => {
-    // Mock warmup-start to return unlockAt
-    apiPostMock.mockResolvedValue({
-      data: { unlockAt: Date.now() + WARMUP_MIN_SECONDS * 1000 },
-    });
-
     render(<WarmupPhase challenge={challenge} apiToken="test-token" onComplete={vi.fn()} />);
 
-    // Wait for warmup to complete
+    // Advance 5 seconds into warmup (timer active)
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(WARMUP_MIN_SECONDS * 1000);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(5000);
     });
 
-    // Button should be enabled initially
-    const startButton = screen.getByRole("button", { name: "Start Challenge →" });
-    expect(startButton).toBeEnabled();
-
     // Simulate tab hidden (visibilitychange)
-    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true, writable: true });
-    document.dispatchEvent(new Event("visibilitychange"));
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true, writable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(100);
+    });
 
     // Button should now be disabled and show paused text
     expect(screen.getByRole("button", { name: "Paused — Wait to resume" })).toBeDisabled();
 
     // Simulate tab visible again
-    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true, writable: true });
-    document.dispatchEvent(new Event("visibilitychange"));
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true, writable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(100);
+    });
 
-    // Button should be enabled again
+    // Complete remaining warmup
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(WARMUP_MIN_SECONDS * 1000);
+    });
+
+    // Button should be enabled once completed
     expect(screen.getByRole("button", { name: "Start Challenge →" })).toBeEnabled();
   });
 });

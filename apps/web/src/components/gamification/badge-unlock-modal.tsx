@@ -74,7 +74,7 @@ export function BadgeUnlockModal({ badges, onClose }: BadgeUnlockModalProps) {
     setCurrentIndex((i) => Math.min(undismissed.length - 1, i + 1));
   }
 
-  const shareUrl = `https://x.com/intent/tweet?text=I+just+earned+${encodeURIComponent(badge.name)}+on+StreamFi!`;
+  const shareUrl = `https://x.com/intent/tweet?text=I+just+earned+${encodeURIComponent(badge.name)}+on+BrandBlitz!`;
 
   return (
     <>

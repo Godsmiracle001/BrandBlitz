@@ -260,14 +260,17 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
               <p className={`text-lg font-bold ${LEAGUE_CONFIG[user.league ?? publicProfile!.league!.tier].textColor}`}>
                 {LEAGUE_CONFIG[user.league ?? publicProfile!.league!.tier].label}
               </p>
-              {publicProfile?.league?.rank != null && (
+              {publicProfile?.league?.rank != null ? (
                 <p className={`text-sm ${LEAGUE_CONFIG[user.league ?? publicProfile!.league!.tier].textColor}/80`}>
                   Rank #{publicProfile.league.rank} this week
                 </p>
-              )}
-              {publicProfile?.league?.rank == null && (
+              ) : (
                 <p className={`text-sm ${LEAGUE_CONFIG[user.league ?? publicProfile!.league!.tier].textColor}/80`}>
-                  Current league placement
+                  Unranked this week — play a challenge to enter standings or{" "}
+                  <Link href="/leaderboard" className="underline font-medium hover:opacity-90">
+                    view leaderboard
+                  </Link>
+                  .
                 </p>
               )}
             </div>
