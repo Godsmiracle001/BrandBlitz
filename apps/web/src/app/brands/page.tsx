@@ -1,209 +1,170 @@
-import * as React from "react";
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
+import { createApiClient } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { api } from "@/lib/api";
-import type { Metadata } from "next";
 
-const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+interface ActiveChallenge {
+  id: string;
+  brand_id: string;
+  brand_name: string;
+  logo_url: string | null;
+}
 
-interface PublicBrand {
+interface DirectoryBrand {
   id: string;
   name: string;
-  tagline: string | null;
-  logo_url: string | null;
-  primary_color: string | null;
-  category: string | null;
-  active_challenge_count: number;
+  challengeIds: string[];
 }
 
-export const metadata: Metadata = {
-  title: "Brand Directory",
-  description: "Browse all brands on BrandBlitz. Discover active challenges and compete for USDC rewards.",
-  openGraph: {
-    title: "Brand Directory — BrandBlitz",
-    description: "Browse all brands on BrandBlitz. Discover active challenges and compete for USDC rewards.",
-  },
-};
+export default function BrandDirectoryPage() {
+  const [brands, setBrands] = useState<DirectoryBrand[]>([]);
+  const [query, setQuery] = useState("");
+  const [activeLetter, setActiveLetter] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setLoadFailed(false);
+      try {
+        const client = createApiClient();
+        const challenges: ActiveChallenge[] = [];
+        let cursor: string | undefined;
+        do {
+          const params = new URLSearchParams({ limit: "100" });
+          if (cursor) params.set("cursor", cursor);
+          const response = await client.get(`/challenges?${params.toString()}`);
+          challenges.push(...(response.data.data as ActiveChallenge[]));
+          cursor = response.data.nextCursor ?? undefined;
+        } while (cursor);
 
-async function getPublicBrands(): Promise<PublicBrand[]> {
-  try {
-    const res = await fetch(`${API_URL}/brands/public`, {
-      next: { revalidate: 60 },
+        const grouped = new Map<string, DirectoryBrand>();
+        for (const challenge of challenges) {
+          if (!challenge.brand_id || !challenge.brand_name) continue;
+          const existing = grouped.get(challenge.brand_id);
+          if (existing) existing.challengeIds.push(challenge.id);
+          else {
+            grouped.set(challenge.brand_id, {
+              id: challenge.brand_id,
+              name: challenge.brand_name,
+              challengeIds: [challenge.id],
+            });
+          }
+        }
+        if (!cancelled)
+          setBrands([...grouped.values()].sort((a, b) => a.name.localeCompare(b.name)));
+      } catch {
+        if (!cancelled) setLoadFailed(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const filtered = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    return brands.filter((brand) => {
+      const name = brand.name.toLocaleLowerCase();
+      return (
+        (!normalizedQuery || name.includes(normalizedQuery)) &&
+        (!activeLetter || name.startsWith(activeLetter.toLocaleLowerCase()))
+      );
     });
-    if (!res.ok) throw new Error("Failed to fetch");
-    const data = await res.json();
-    return data.brands ?? [];
-  } catch {
-    return [];
-  }
-}
+  }, [activeLetter, brands, query]);
 
-function BrandDirectoryClient({ brands }: { brands: PublicBrand[] }) {
-  const [query, setQuery] = React.useState("");
-  const [activeLetter, setActiveLetter] = React.useState<string | null>(null);
-
-  const filtered = React.useMemo(() => {
-    let result = brands;
-    if (query.trim()) {
-      const q = query.toLowerCase();
-      result = result.filter((b) => b.name.toLowerCase().includes(q));
-    }
-    if (activeLetter) {
-      result = result.filter((b) => b.name.charAt(0).toUpperCase() === activeLetter);
-    }
-    return result;
-  }, [brands, query, activeLetter]);
-
-  const brandsByLetter = React.useMemo(() => {
-    const map = new Map<string, PublicBrand[]>();
-    for (const brand of filtered) {
-      const letter = brand.name.charAt(0).toUpperCase();
-      if (!map.has(letter)) map.set(letter, []);
-      map.get(letter)!.push(brand);
-    }
-    return map;
-  }, [filtered]);
-
-  const usedLetters = React.useMemo(() => {
-    const set = new Set(brands.map((b) => b.name.charAt(0).toUpperCase()));
-    return set;
-  }, [brands]);
+  const noResultsDescription =
+    query.trim() && activeLetter
+      ? "No brands match both filters. Clear the search, the letter filter, or both."
+      : query.trim()
+        ? "Try a different search term."
+        : activeLetter
+          ? "Try another letter or clear the letter filter."
+          : "No brands with active challenges are available right now.";
 
   return (
-    <div>
-      <div className="mb-6">
-        <Input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search brands..."
-          aria-label="Search brands by name"
-        />
-      </div>
+    <main className="mx-auto w-full max-w-5xl px-6 py-12">
+      <h1 className="text-3xl font-bold">Brand Directory</h1>
+      <p className="mt-2 text-[var(--muted-foreground)]">Explore brands with active challenges.</p>
 
-      <nav className="mb-6 flex flex-wrap gap-1" aria-label="Jump to letter">
-        <button
-          onClick={() => setActiveLetter(null)}
-          className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${
-            activeLetter === null
-              ? "bg-[var(--primary)] text-white"
-              : "bg-[var(--muted)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-          }`}
+      <div className="my-6 flex flex-wrap items-center gap-3">
+        <label className="sr-only" htmlFor="brand-search">
+          Search brands
+        </label>
+        <input
+          id="brand-search"
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search brands"
+          className="bg-background min-h-10 min-w-56 rounded-md border px-3 text-sm"
+        />
+        <div
+          className="flex flex-wrap gap-1"
+          role="group"
+          aria-label="Filter brands by first letter"
         >
-          All
-        </button>
-        {ALPHABET.map((letter) => {
-          const isUsed = usedLetters.has(letter);
-          const labelText = isUsed
-            ? `Jump to brands starting with ${letter}`
-            : `No brands starting with ${letter}`;
-          return (
-            <button
+          {"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => (
+            <Button
               key={letter}
+              size="sm"
+              variant={activeLetter === letter ? "default" : "outline"}
+              aria-pressed={activeLetter === letter}
+              aria-label={`Brands starting with ${letter}`}
               onClick={() => setActiveLetter(activeLetter === letter ? null : letter)}
-              disabled={!isUsed}
-              title={labelText}
-              aria-label={labelText}
-              className={`rounded px-2 py-1 text-xs font-semibold transition-colors ${
-                activeLetter === letter
-                  ? "bg-[var(--primary)] text-white"
-                  : isUsed
-                    ? "bg-[var(--muted)] text-[var(--muted-foreground)] hover:bg-[var(--accent)]"
-                    : "cursor-not-allowed text-[var(--muted-foreground)]/40"
-              }`}
             >
               {letter}
-            </button>
-          );
-        })}
-      </nav>
-
-      {filtered.length === 0 ? (
-        <EmptyState
-          title="No brands found"
-          description={query ? "Try a different search term." : "No brands have been created yet."}
-        />
-      ) : (
-        <div className="space-y-8">
-          {Array.from(brandsByLetter.entries()).map(([letter, letterBrands]) => (
-            <section key={letter} aria-label={`Brands starting with ${letter}`}>
-              <h2 className="mb-3 text-lg font-bold text-[var(--muted-foreground)]">{letter}</h2>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {letterBrands.map((brand) => (
-                  <Link key={brand.id} href={`/brand/${brand.id}`}>
-                    <Card className={`transition-shadow hover:shadow-md ${brand.active_challenge_count === 0 ? "opacity-60" : ""}`}>
-                      <CardContent className="flex items-center gap-4 py-4">
-                        {brand.logo_url ? (
-                          <Image
-                            src={brand.logo_url}
-                            alt={brand.name}
-                            width={48}
-                            height={48}
-                            sizes="48px"
-                            className="h-12 w-12 rounded-lg object-contain"
-                          />
-                        ) : (
-                          <div
-                            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg text-lg font-bold text-white"
-                            style={{ backgroundColor: brand.primary_color ?? "var(--primary)" }}
-                          >
-                            {brand.name.charAt(0).toUpperCase()}
-                          </div>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate font-semibold text-[var(--foreground)]">
-                            {brand.name}
-                          </p>
-                          {brand.tagline && (
-                            <p className="truncate text-xs text-[var(--muted-foreground)]">
-                              {brand.tagline}
-                            </p>
-                          )}
-                        </div>
-                        <Badge
-                          variant={brand.active_challenge_count > 0 ? "default" : "secondary"}
-                          className="shrink-0"
-                        >
-                          {brand.active_challenge_count} active
-                        </Badge>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                ))}
-              </div>
-            </section>
+            </Button>
           ))}
         </div>
-      )}
-    </div>
-  );
-}
-
-export default async function BrandsPage() {
-  const brands = await getPublicBrands();
-
-  return (
-    <main className="mx-auto max-w-5xl px-6 py-12">
-      <div className="mb-8">
-        <h1 className="text-3xl font-extrabold text-[var(--foreground)]">Brand Directory</h1>
-        <p className="mt-2 text-[var(--muted-foreground)]">
-          Browse all brands and discover active challenges.
-        </p>
+        {(query || activeLetter) && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setQuery("");
+              setActiveLetter(null);
+            }}
+          >
+            Clear filters
+          </Button>
+        )}
       </div>
 
-      {brands.length === 0 ? (
-        <EmptyState
-          title="No brands yet"
-          description="Brand owners will be listed here once they create their brand kits."
-        />
+      {loading ? (
+        <p role="status">Loading brands…</p>
+      ) : loadFailed ? (
+        <EmptyState title="Couldn't load brands" description="Refresh the page to try again." />
+      ) : filtered.length === 0 ? (
+        <EmptyState title="No brands found" description={noResultsDescription} />
       ) : (
-        <BrandDirectoryClient brands={brands} />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.map((brand) => (
+            <Card key={brand.id}>
+              <CardHeader>
+                <CardTitle>{brand.name}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-4 text-sm text-[var(--muted-foreground)]">
+                  {brand.challengeIds.length} active challenge
+                  {brand.challengeIds.length === 1 ? "" : "s"}
+                </p>
+                <Link href={`/challenge/${brand.challengeIds[0]}`}>
+                  <Button className="w-full">View active challenge</Button>
+                </Link>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       )}
     </main>
   );

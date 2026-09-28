@@ -1,67 +1,48 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import BrandsPage from "./page";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/api", () => ({
-  api: {
-    get: vi.fn(),
-  },
-}));
+const { get } = vi.hoisted(() => ({ get: vi.fn() }));
+vi.mock("@/lib/api", () => ({ createApiClient: () => ({ get }) }));
 
-vi.mock("next/image", () => ({
-  default: ({ alt, src }: { alt: string; src: string }) => <img alt={alt} src={src} />,
-}));
+import BrandDirectoryPage from "./page";
 
-vi.mock("next/link", () => ({
-  default: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
-}));
+describe("BrandDirectoryPage", () => {
+  beforeEach(() => {
+    get.mockReset();
+    get.mockResolvedValue({
+      data: {
+        data: [
+          { id: "c1", brand_id: "b1", brand_name: "Acme" },
+          { id: "c2", brand_id: "b2", brand_name: "Brightside" },
+        ],
+        nextCursor: null,
+      },
+    });
+  });
 
-const mockBrands = [
-  {
-    id: "b-1",
-    name: "Acme Corp",
-    tagline: "Building the future",
-    logo_url: "https://example.com/acme.png",
-    primary_color: "#ff0000",
-    category: "Tech",
-    active_challenge_count: 2,
-  },
-  {
-    id: "b-2",
-    name: "Beta Inc",
-    tagline: "Second to none",
-    logo_url: null,
-    primary_color: "#00ff00",
-    category: "Finance",
-    active_challenge_count: 0,
-  },
-];
+  it("explains when search and letter filters have no results and can clear both", async () => {
+    render(<BrandDirectoryPage />);
+    await screen.findByText("Acme");
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search brands" }), {
+      target: { value: "Bright" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Brands starting with A" }));
 
-describe("BrandsPage", () => {
-  it("renders brands and sets title/aria-label for used vs unused alphabet filter buttons", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ brands: mockBrands }),
-      })
-    );
+    expect(
+      await screen.findByText(
+        "No brands match both filters. Clear the search, the letter filter, or both."
+      )
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(await screen.findByText("Acme")).toBeTruthy();
+  });
 
-    const jsx = await BrandsPage();
-    render(jsx);
-
-    expect(screen.getByText("Brand Directory")).toBeInTheDocument();
-    expect(screen.getByText("Acme Corp")).toBeInTheDocument();
-    expect(screen.getByText("Beta Inc")).toBeInTheDocument();
-
-    // Button 'A' is used
-    const buttonA = screen.getByRole("button", { name: "Jump to brands starting with A" });
-    expect(buttonA).toBeEnabled();
-    expect(buttonA).toHaveAttribute("title", "Jump to brands starting with A");
-
-    // Button 'Z' is disabled because no brands start with Z
-    const buttonZ = screen.getByRole("button", { name: "No brands starting with Z" });
-    expect(buttonZ).toBeDisabled();
-    expect(buttonZ).toHaveAttribute("title", "No brands starting with Z");
+  it("keeps search-only empty guidance distinct", async () => {
+    render(<BrandDirectoryPage />);
+    await waitFor(() => expect(screen.getByText("Acme")).toBeTruthy());
+    fireEvent.change(screen.getByRole("searchbox", { name: "Search brands" }), {
+      target: { value: "Missing" },
+    });
+    expect(await screen.findByText("Try a different search term.")).toBeTruthy();
   });
 });

@@ -47,6 +47,15 @@ export default async function HomePage() {
               Play Now
             </Button>
           </Link>
+          <Link href="/brands">
+            <Button
+              size="lg"
+              variant="outline"
+              className="border-white px-8 text-lg text-white hover:bg-white/10"
+            >
+              Browse Brands
+            </Button>
+          </Link>
           <Link href="/login">
             <Button
               size="lg"

@@ -2,8 +2,25 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { BadgeGrid, deduplicateBadges, type Badge } from "./badge-grid";
 
-const earned: Badge = { id: "1", slug: "first-win", name: "First Win", description: "Won first challenge", criteria: "Win a challenge", iconUrl: "/badges/first-win.png", earned: true, earnedAt: "2024-01-01" };
-const locked: Badge = { id: "2", slug: "streak-7", name: "7-Day Streak", description: "7 day streak", criteria: "Play 7 days in a row", iconUrl: "/badges/streak.png", earned: false };
+const earned: Badge = {
+  id: "1",
+  slug: "first-win",
+  name: "First Win",
+  description: "Won first challenge",
+  criteria: "Win a challenge",
+  iconUrl: "/badges/first-win.png",
+  earned: true,
+  earnedAt: "2024-01-01",
+};
+const locked: Badge = {
+  id: "2",
+  slug: "streak-7",
+  name: "7-Day Streak",
+  description: "7 day streak",
+  criteria: "Play 7 days in a row",
+  iconUrl: "/badges/streak.png",
+  earned: false,
+};
 
 describe("BadgeGrid", () => {
   it("renders earned badge without lock icon", () => {
@@ -14,6 +31,7 @@ describe("BadgeGrid", () => {
   it("renders locked badge with lock aria label", () => {
     render(<BadgeGrid badges={[locked]} />);
     expect(screen.getByRole("img", { name: /7-Day Streak \(locked\)/i })).toBeTruthy();
+    expect(screen.getByText("Play 7 days in a row")).toBeTruthy();
   });
 
   it("calls onNewBadge for newly earned badges", () => {
@@ -59,7 +77,7 @@ describe("deduplicateBadges (#358)", () => {
     const duplicate: Badge = { ...earned, id: "1e", earnedAt: "2024-03-01" };
     render(<BadgeGrid badges={[earned, duplicate, locked]} />);
     // Only one 'First Win' badge card should appear
-    const firstWinCards = screen.getAllByRole("img", { name: /First Win/i });
+    const firstWinCards = screen.getAllByText("First Win", { exact: true });
     expect(firstWinCards).toHaveLength(1);
   });
 });
