@@ -1,7 +1,26 @@
 import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_TEST_SCHEMA_PREFIX = "vitest_";
 const TEST_SCHEMA_ENV_VAR = "TEST_DB_SCHEMA";
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const apiEnvTestPath = path.join(repoRoot, "apps/api/.env.test");
+
+if (existsSync(apiEnvTestPath)) {
+  for (const line of readFileSync(apiEnvTestPath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex === -1) continue;
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    process.env[key] ??= value;
+  }
+}
 
 type SqlExecutor = (sql: string) => Promise<unknown>;
 

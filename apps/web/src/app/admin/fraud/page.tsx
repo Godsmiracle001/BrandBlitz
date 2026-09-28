@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +54,8 @@ interface Pagination {
 
 type StatusFilter = "all" | "open" | "resolved" | "escalated";
 type ActionType = "resolved" | "escalated";
+
+const MAX_REASON_LENGTH = 500;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +96,9 @@ export default function AdminFraudPage() {
   const [dialogTargetIds, setDialogTargetIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [copiedDetailsId, setCopiedDetailsId] = useState<string | null>(null);
+
+  const isNearLimit = dialogReason.length >= MAX_REASON_LENGTH * 0.85;
+  const isAtLimit = dialogReason.length >= MAX_REASON_LENGTH;
 
   // ─── Auth guard ──────────────────────────────────────────────────────────
 
@@ -187,7 +193,30 @@ export default function AdminFraudPage() {
   // ─── Render ──────────────────────────────────────────────────────────────
 
   if (status === "loading" || (status === "authenticated" && userRole !== "admin")) {
-    return null;
+    return (
+      <div className="mx-auto max-w-7xl px-4 py-8">
+        <div className="mb-6 flex items-center justify-between">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-4 w-24" />
+        </div>
+        <Skeleton className="mb-6 h-14 w-full rounded-lg" />
+        <div className="rounded-lg border">
+          <div className="border-b px-6 py-4">
+            <Skeleton className="h-5 w-28" />
+          </div>
+          <div className="divide-y">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 px-4 py-3">
+                <Skeleton className="h-4 w-4" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="ml-auto h-4 w-16" />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -426,8 +455,24 @@ export default function AdminFraudPage() {
                   : "e.g. Needs manual account investigation"
               }
               value={dialogReason}
-              onChange={(e) => setDialogReason(e.target.value)}
+              maxLength={MAX_REASON_LENGTH}
+              onChange={(e) => {
+                if (e.target.value.length <= MAX_REASON_LENGTH) {
+                  setDialogReason(e.target.value);
+                }
+              }}
             />
+            <p
+              className={`mt-1 text-right text-xs transition-colors ${
+                isAtLimit
+                  ? "font-semibold text-red-600"
+                  : isNearLimit
+                    ? "font-medium text-amber-600"
+                    : "text-[var(--muted-foreground)]"
+              }`}
+            >
+              {dialogReason.length}/{MAX_REASON_LENGTH}
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={submitting}>

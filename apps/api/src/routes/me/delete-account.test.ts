@@ -15,18 +15,27 @@ vi.mock("../../middleware/rate-limit", () => ({
   apiLimiter: (_req: any, _res: any, next: any) => next(),
 }));
 
-const mockFindUserById = vi.fn();
-const mockFindPendingErasureRequest = vi.fn();
-const mockCreateErasureRequest = vi.fn();
-const mockCancelErasureRequest = vi.fn();
-const mockEnqueueGdprErasure = vi.fn();
-const mockCancelGdprErasure = vi.fn();
+const {
+  mockFindUserById,
+  mockFindPendingErasureRequest,
+  mockFindPendingSelfErasureRequest,
+  mockCreateErasureRequest,
+  mockCancelErasureRequest,
+  mockEnqueueGdprErasure,
+  mockCancelGdprErasure,
+} = vi.hoisted(() => ({
+  mockFindUserById: vi.fn(),
+  mockFindPendingErasureRequest: vi.fn(),
+  mockFindPendingSelfErasureRequest: vi.fn(),
+  mockCreateErasureRequest: vi.fn(),
+  mockCancelErasureRequest: vi.fn(),
+  mockEnqueueGdprErasure: vi.fn(),
+  mockCancelGdprErasure: vi.fn(),
+}));
 
 vi.mock("../../db/queries/users", () => ({
   findUserById: mockFindUserById,
 }));
-
-const mockFindPendingSelfErasureRequest = vi.fn();
 
 vi.mock("../../db/queries/gdpr", () => ({
   findPendingErasureRequest: mockFindPendingErasureRequest,
@@ -105,7 +114,7 @@ describe("POST /me/delete-account", () => {
       .expect(202);
 
     expect(res.body.executeAt).toBe(fakeRequest.execute_at);
-    expect(mockCreateErasureRequest).toHaveBeenCalledWith("user-123", undefined);
+    expect(mockCreateErasureRequest).toHaveBeenCalledWith("user-123");
     expect(mockEnqueueGdprErasure).toHaveBeenCalledWith({
       userId: "user-123",
       requestId: "req-abc",

@@ -23,7 +23,7 @@ A row is inserted into `gdpr_erasure_requests` and a BullMQ job is enqueued with
 
 During the grace window the user can cancel:
 
-```
+```http
 DELETE /me/delete-account
 ```
 
@@ -72,7 +72,7 @@ If a full row deletion is required (e.g., test data cleanup or a court order):
 ## Relevant Database Objects
 
 | Object | Purpose |
-|---|---|
+| --- | --- |
 | `gdpr_erasure_requests` | Tracks pending / cancelled / executed erasure requests |
 | `gdpr_erasure_requests.execute_at` | Timestamp when anonymisation fires |
 | `gdpr_erasure_requests.cancelled_at` | Set when user cancels within grace window |
@@ -95,7 +95,7 @@ ORDER BY execute_at;
 
 Check failed BullMQ jobs in the `gdpr-erasure` queue via the Bull dashboard or Redis:
 
-```
+```bash
 KEYS gdpr:*
 ```
 

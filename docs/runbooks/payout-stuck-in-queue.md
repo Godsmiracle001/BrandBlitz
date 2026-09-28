@@ -13,7 +13,7 @@ One or more of:
 ## Impact
 
 | Component | Effect |
-|---|---|
+| --- | --- |
 | Payout delivery | **Delayed** — winning users do not receive USDC |
 | Challenge UX | Users see pending state indefinitely |
 | Data integrity | **No data loss** — jobs are durable in Redis |
@@ -64,6 +64,7 @@ redis-cli LLEN bull:payout:active  # should be > 0 if jobs are pending
 This is expected after retryable failures (Horizon errors, bad-seq). Wait for the delay to expire — BullMQ will automatically move them back to `waiting`.
 
 To check when jobs become ready:
+
 ```bash
 redis-cli ZRANGE bull:payout:delayed 0 -1 WITHSCORES \
   | awk 'NR%2==0 {print strftime("%Y-%m-%d %H:%M:%S", $1/1000)}'
@@ -99,6 +100,7 @@ q.retryJobs({ count: 500, state: 'active' }).then(() => process.exit(0));
    - Bad job payload → inspect job data, fix the producer, manually remove the bad job
 
 3. Once the root cause is fixed, retry failed jobs:
+
    ```bash
    node -e "
    const { Queue } = require('bullmq');
@@ -109,6 +111,7 @@ q.retryJobs({ count: 500, state: 'active' }).then(() => process.exit(0));
    ```
 
 4. Monitor queue depth until it drains to 0:
+
    ```bash
    watch -n5 "redis-cli LLEN bull:payout:waiting && redis-cli LLEN bull:payout:active"
    ```

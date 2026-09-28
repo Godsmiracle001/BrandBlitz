@@ -4,7 +4,7 @@ import { ReactNode, useEffect } from "react";
 
 /**
  * FingerprintProvider initializes FingerprintJS Pro for device fingerprinting.
- * 
+ *
  * Sets up the global fpPromise so useFingerprint hook can access the visitorId.
  * Gracefully handles missing configuration or load failures.
  */
@@ -21,10 +21,8 @@ export function FingerprintProvider({ children }: { children: ReactNode }) {
     const initFingerprint = async () => {
       try {
         const FingerprintJS = await import("@fingerprintjs/fingerprintjs-pro-react");
-        const { FingerprintJsProvider } = FingerprintJS;
-
         // Create the fpPromise and attach to window for useFingerprint hook
-        const fpPromise = FingerprintJS.FingerprintJsProvider.load({
+        const fpPromise = FingerprintJS.FingerprintJSPro.load({
           apiKey: publicKey,
         });
 

@@ -110,6 +110,7 @@ describe("WarmupPhase", () => {
 
     expect(screen.getByText("0")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start Challenge →" })).toBeEnabled();
+    expect(screen.getByText(/Ready!/i)).toBeInTheDocument();
   });
 
   it("posts warmup completion and invokes onComplete with the challenge token", async () => {
@@ -214,5 +215,40 @@ describe("WarmupPhase", () => {
 
     expect(screen.getByText(/Couldn't start the challenge\. Check your connection and try again\./i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+
+  it("start button is disabled when countdown is paused due to visibility change", async () => {
+    render(<WarmupPhase challenge={challenge} apiToken="test-token" onComplete={vi.fn()} />);
+
+    // Advance 5 seconds into warmup (timer active)
+    await act(async () => {
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+
+    // Simulate tab hidden (visibilitychange)
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true, writable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    // Button should now be disabled and show paused text
+    expect(screen.getByRole("button", { name: "Paused — Wait to resume" })).toBeDisabled();
+
+    // Simulate tab visible again
+    await act(async () => {
+      Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true, writable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(100);
+    });
+
+    // Complete remaining warmup
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(WARMUP_MIN_SECONDS * 1000);
+    });
+
+    // Button should be enabled once completed
+    expect(screen.getByRole("button", { name: "Start Challenge →" })).toBeEnabled();
   });
 });

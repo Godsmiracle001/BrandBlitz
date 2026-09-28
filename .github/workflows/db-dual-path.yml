@@ -5,12 +5,14 @@ on:
     paths:
       - 'init.sql'
       - 'migrations/**'
+      - 'apps/api/migrations/**'
       - 'docs/DATABASE.md'
       - 'docs/db/er.svg'
   pull_request:
     paths:
       - 'init.sql'
       - 'migrations/**'
+      - 'apps/api/migrations/**'
       - 'docs/DATABASE.md'
       - 'docs/db/er.svg'
 
@@ -57,7 +59,7 @@ jobs:
       - name: Seed fresh DB from init.sql
         env:
           PGPASSWORD: bb
-        run: psql -h localhost -p 5433 -U bb -d brandblitz_fresh -f init.sql
+        run: psql -v ON_ERROR_STOP=1 -h localhost -p 5433 -U bb -d brandblitz_fresh -f init.sql
 
       # ── Migration path ────────────────────────────────────────────────────
       - name: Apply migrations in order
@@ -66,7 +68,7 @@ jobs:
         run: |
           for f in $(ls migrations/*.sql | sort); do
             echo "Applying $f"
-            psql -h localhost -p 5434 -U bb -d brandblitz_migration -f "$f"
+            psql -v ON_ERROR_STOP=1 -h localhost -p 5434 -U bb -d brandblitz_migration -f "$f"
           done
 
       # ── Schema diff ───────────────────────────────────────────────────────
@@ -86,6 +88,22 @@ jobs:
           grep -v '^--' /tmp/schema_migration.sql | sort > /tmp/migration_sorted.sql
           diff /tmp/fresh_sorted.sql /tmp/migration_sorted.sql && echo "Schemas match" || (echo "Schema divergence detected" && exit 1)
 
+      # ── Index usage verification (issue #342) ───────────────────────────────
+      - name: Verify fraud_flags admin queries use index scans
+        env:
+          PGPASSWORD: bb
+        run: |
+          PLAN=$(psql -h localhost -p 5433 -U bb -d brandblitz_fresh -X -A -t -c \
+            "SET enable_seqscan = off; EXPLAIN ANALYZE SELECT * FROM fraud_flags WHERE user_id = '00000000-0000-0000-0000-000000000000';")
+          echo "$PLAN"
+          echo "$PLAN" | grep -q "idx_fraud_flags_user_id" \
+            || (echo "Expected index scan on idx_fraud_flags_user_id, got seq scan" && exit 1)
+          ORDER_PLAN=$(psql -h localhost -p 5433 -U bb -d brandblitz_fresh -X -A -t -c \
+            "SET enable_seqscan = off; EXPLAIN ANALYZE SELECT * FROM fraud_flags ORDER BY created_at DESC LIMIT 100;")
+          echo "$ORDER_PLAN"
+          echo "$ORDER_PLAN" | grep -q "idx_fraud_flags_created_at" \
+            || (echo "Expected index scan on idx_fraud_flags_created_at, got seq scan" && exit 1)
+
       - name: Install tbls
         run: |
           GOBIN=$HOME/go/bin go install github.com/k1LoW/tbls@latest
@@ -95,3 +113,119 @@ jobs:
           mkdir -p /tmp/tbls-docs
           PATH="$HOME/go/bin:$PATH" tbls doc "postgresql://bb:bb@localhost:5433/brandblitz_fresh?sslmode=disable" /tmp/tbls-docs --er-format svg --force
           cmp -s /tmp/tbls-docs/schema.svg docs/db/er.svg
+
+  # ── Down migration exercise ──────────────────────────────────────────────────
+  # Every .down.sql file is a code path that's only ever needed during a live
+  # incident under time pressure. This job ensures each one is valid by applying
+  # all forward migrations, rolling back each down file in reverse order, and
+  # performing a round-trip check (down → up leaves the schema unchanged).
+  exercise-down-migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: brandblitz_down_test
+          POSTGRES_USER: bb
+          POSTGRES_PASSWORD: bb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Bootstrap database from init.sql
+        env:
+          PGPASSWORD: bb
+          DATABASE_URL: postgresql://bb:bb@localhost:5432/brandblitz_down_test
+        run: psql -v ON_ERROR_STOP=1 -h localhost -U bb -d brandblitz_down_test -f init.sql
+
+      - name: Populate schema_migrations with all migration files
+        env:
+          PGPASSWORD: bb
+        run: |
+          # init.sql bootstraps with 00000-initial.sql and 00001-hot-path-indexes.sql.
+          # We need to register ALL migration files as applied so the migrate
+          # runner can roll them back. Collect non-down SQL files from
+          # apps/api/migrations/, sort them, and INSERT each one.
+          for f in $(ls apps/api/migrations/*.sql | grep -v '\.down\.sql$' | sort); do
+            VERSION=$(basename "$f")
+            psql -h localhost -U bb -d brandblitz_down_test \
+              -c "INSERT INTO schema_migrations (version) VALUES ('${VERSION}') ON CONFLICT (version) DO NOTHING;"
+          done
+
+      - name: Dump baseline schema (all migrations applied)
+        env:
+          PGPASSWORD: bb
+        run: pg_dump -h localhost -U bb -d brandblitz_down_test --schema-only > /tmp/schema_baseline.sql
+
+      - name: Exercise each down migration in reverse order with round-trip check
+        env:
+          PGPASSWORD: bb
+          DATABASE_URL: postgresql://bb:bb@localhost:5432/brandblitz_down_test
+        run: |
+          set -euo pipefail
+
+          # Collect down files in reverse version order (newest first)
+          DOWN_FILES=$(ls apps/api/migrations/*.down.sql 2>/dev/null | sort -t/ -k4 -V -r) || true
+
+          if [ -z "$DOWN_FILES" ]; then
+            echo "No down migration files found — nothing to exercise."
+            exit 0
+          fi
+
+          for DOWN_FILE in $DOWN_FILES; do
+            BASENAME=$(basename "$DOWN_FILE" .down.sql)
+            echo ""
+            echo "═══════════════════════════════════════════════════════════════"
+            echo "  Exercising down migration: ${BASENAME}.down.sql"
+            echo "═══════════════════════════════════════════════════════════════"
+
+            # ── Step 1: Roll back this migration ────────────────────────────
+            echo "→ Rolling back ${BASENAME}..."
+            pnpm --filter @brandblitz/api migrate:down 1
+            echo "✓ Rollback of ${BASENAME} succeeded"
+
+            # ── Step 2: Re-apply the up migration (round-trip) ──────────────
+            echo "→ Re-applying ${BASENAME} (round-trip)..."
+            pnpm --filter @brandblitz/api migrate
+            echo "✓ Re-apply of ${BASENAME} succeeded"
+
+            # ── Step 3: Dump schema and compare with baseline ───────────────
+            echo "→ Verifying schema matches baseline after round-trip..."
+            pg_dump -h localhost -U bb -d brandblitz_down_test --schema-only > /tmp/schema_roundtrip.sql
+
+            # Normalise both dumps (strip comments, sort) for comparison
+            grep -v '^--' /tmp/schema_baseline.sql | sort > /tmp/baseline_sorted.sql
+            grep -v '^--' /tmp/schema_roundtrip.sql | sort > /tmp/roundtrip_sorted.sql
+
+            if diff /tmp/baseline_sorted.sql /tmp/roundtrip_sorted.sql; then
+              echo "✓ Round-trip check passed for ${BASENAME}"
+            else
+              echo ""
+              echo "❌ ROUND-TRIP CHECK FAILED for ${BASENAME}"
+              echo "   Schema after down+up does not match baseline."
+              echo "   This means the down migration is incorrect or incomplete."
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "═══════════════════════════════════════════════════════════════"
+          echo "  All down migrations exercised successfully ✓"
+          echo "═══════════════════════════════════════════════════════════════"

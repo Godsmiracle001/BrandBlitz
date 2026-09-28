@@ -1,3 +1,10 @@
+-- DEPRECATED / SUPERSEDED:
+-- This file in the root /migrations directory was never read by apps/api/scripts/migrate.ts.
+-- The real production migration is located at:
+-- apps/api/migrations/0024-username-unique-partial.sql
+--
+-- Keep this file for historical context only. Do not execute or reference this file.
+
 -- Migration 011: Fix username UNIQUE constraint to handle NULLs properly
 -- Issue #202: users.username is UNIQUE but nullable — multiple NULLs allowed
 --
@@ -18,4 +25,3 @@ CREATE UNIQUE INDEX users_username_unique
 -- Add comment for documentation
 COMMENT ON INDEX users_username_unique IS 
   'Ensures usernames are unique (case-insensitive) when set, allows multiple NULLs';
-

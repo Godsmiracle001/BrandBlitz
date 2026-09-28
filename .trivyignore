@@ -7,8 +7,3 @@
 #
 # Example:
 #   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image brandblitz-api:local
-
-# CVE-2023-45678: Placeholder ignore rule.
-# Justification: Ignored because the vulnerable dependency path is not imported/executed.
-# Expiry: December 31, 2026
-CVE-2023-45678 exp:2026-12-31

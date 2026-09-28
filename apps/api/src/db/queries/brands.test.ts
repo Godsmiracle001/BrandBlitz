@@ -204,14 +204,15 @@ describeIntegration("brands db queries", () => {
 
       // Wrong owner
       const deletedWrong = await brands.deleteBrand(brand.id, owner2);
-      expect(deletedWrong).toBe(false);
+      expect(deletedWrong).toBeNull();
 
       const found = await brands.getBrandById(brand.id);
       expect(found).not.toBeNull();
 
       // Right owner
       const deletedRight = await brands.deleteBrand(brand.id, owner1);
-      expect(deletedRight).toBe(true);
+      expect(deletedRight).toMatchObject({ cancelledChallenges: 0 });
+      expect(deletedRight?.deletedAt).toBeTruthy();
       
       const foundAfter = await brands.getBrandById(brand.id);
       expect(foundAfter).toBeNull();

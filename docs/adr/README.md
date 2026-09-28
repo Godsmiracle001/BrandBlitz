@@ -12,6 +12,9 @@ template.
 | [003](./003-migrations-framework.md) | Hand-Rolled SQL Migrations over an ORM | Accepted |
 | [004](./004-vitest-vs-jest.md) | Vitest over Jest for Unit Tests | Accepted |
 | [005](./005-sentry-vs-opentelemetry.md) | Sentry for Errors, OpenTelemetry for Traces / Metrics | Accepted |
+| [006](./006-unified-cache-tagging.md) | Unified Cache Tagging Scheme for Redis and Next.js Cache Invalidation | Proposed |
+| [007](./007-escrow-multisig-source-of-truth.md) | Escrow Multisig Threshold as Source-of-Truth from On-Chain Contract | Proposed |
+| [008](./008-shared-dlq-policy.md) | Shared Dead-Letter Queue Policy for Uniform Retry and Backoff Semantics | Proposed |
 
 ## When to write one
 

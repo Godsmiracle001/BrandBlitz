@@ -10,7 +10,7 @@ refresh tokens are revoked and the user is force-signed-out.
 ## Trigger scenarios
 
 | Scenario | Behaviour |
-|---|---|
+| --- | --- |
 | Normal rotation | Old jti marked `used`; new tokens issued |
 | Reuse of a used jti | All user jtis revoked; `401 TOKEN_REUSE` |
 | Explicit logout | Current jti marked `used`; `200 ok` |
@@ -19,7 +19,7 @@ refresh tokens are revoked and the user is force-signed-out.
 ## Redis keys
 
 | Key | Purpose | TTL |
-|---|---|---|
+| --- | --- | --- |
 | `jti:<uuid>` | Marks a jti as used/revoked | 30 days |
 | `user_refresh_jtis:<userId>` | Set of active refresh jtis | 30 days |
 
@@ -36,7 +36,7 @@ redis-cli DEL user_refresh_jtis:<userId>
 ## Environment variables
 
 | Variable | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `JWT_SECRET` | required | Signs access tokens (min 32 chars) |
 | `JWT_REFRESH_SECRET` | falls back to `JWT_SECRET` | Signs refresh tokens |
 

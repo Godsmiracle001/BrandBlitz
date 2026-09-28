@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { redis } from "../lib/redis";
 import { computeFingerprint } from "../lib/fingerprint";
+import { setCookieSecure } from "../lib/cookies";
 
 const PENDING_REFERRAL_TTL_SECONDS = 30 * 24 * 60 * 60;
 
@@ -43,11 +44,8 @@ export async function referralAttributionMiddleware(
       "EX",
       PENDING_REFERRAL_TTL_SECONDS,
     );
-    res.cookie("ref", code, {
-      httpOnly: true,
-      sameSite: "lax",
+    setCookieSecure(res, "ref", code, {
       maxAge: PENDING_REFERRAL_TTL_SECONDS * 1000,
-      secure: req.secure,
     });
 
     next();

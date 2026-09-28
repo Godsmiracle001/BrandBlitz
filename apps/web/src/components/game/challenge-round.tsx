@@ -63,20 +63,23 @@ export function ChallengeRound({
   }, [round]);
 
   useEffect(() => {
-    if (previousAnswerStateRef.current && !answerState) {
+    if (previousAnswerStateRef.current && !answerState && !answerError) {
       setLocalSelected(null);
       setLocalLocked(false);
     }
     previousAnswerStateRef.current = answerState;
-  }, [answerState]);
+  }, [answerState, answerError]);
 
-  const handleSelect = useCallback((option: AnswerOptionKey) => {
-    if (answered || disabled) return;
-    const reactionTimeMs = Date.now() - startTimeRef.current;
-    setLocalSelected(option);
-    setLocalLocked(true);
-    onAnswer(option, reactionTimeMs);
-  }, [answered, disabled, onAnswer]);
+  const handleSelect = useCallback(
+    (option: AnswerOptionKey) => {
+      if (answered || disabled) return;
+      const reactionTimeMs = Date.now() - startTimeRef.current;
+      setLocalSelected(option);
+      setLocalLocked(true);
+      onAnswer(option, reactionTimeMs);
+    },
+    [answered, disabled, onAnswer]
+  );
 
   useKeyboardAnswers({
     onAnswer: handleSelect,
@@ -91,14 +94,19 @@ export function ChallengeRound({
   };
 
   const getOptionLabel = (opt: "A" | "B" | "C" | "D") => {
-    const map = { A: question.option_a, B: question.option_b, C: question.option_c, D: question.option_d };
+    const map = {
+      A: question.option_a,
+      B: question.option_b,
+      C: question.option_c,
+      D: question.option_d,
+    };
     return map[opt];
   };
 
   return (
-    <div className="max-w-lg mx-auto space-y-6">
+    <div className="mx-auto max-w-lg space-y-6">
       {/* Round indicator */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" data-tutorial="score">
         <span className="text-sm font-medium text-[var(--muted-foreground)]">
           Round {round} of 3
         </span>
@@ -112,7 +120,7 @@ export function ChallengeRound({
       </div>
 
       {/* Prompt image */}
-      {(question.prompt_type === "logo" && brandLogoUrl) && (
+      {question.prompt_type === "logo" && brandLogoUrl && (
         <div className="flex justify-center py-4">
           <Image
             src={brandLogoUrl}
@@ -124,7 +132,7 @@ export function ChallengeRound({
           />
         </div>
       )}
-      {(question.prompt_type === "productImage1" && brandProductImageUrl) && (
+      {question.prompt_type === "productImage1" && brandProductImageUrl && (
         <div className="flex justify-center py-4">
           <Image
             src={brandProductImageUrl}
@@ -138,13 +146,15 @@ export function ChallengeRound({
       )}
 
       {/* Question text */}
-      <p className="text-xl font-semibold text-center">{question.question_text}</p>
+      <p className="text-center text-xl font-semibold">{question.question_text}</p>
 
       {/* Answer options */}
       <div className="grid grid-cols-1 gap-3">
         {OPTIONS.map((opt) => {
           const selected = answerState ? answerState.selectedOption === opt : localSelected === opt;
-          const pending = answerState ? selected && answerState.status === "pending" : selected && localLocked;
+          const pending = answerState
+            ? selected && answerState.status === "pending"
+            : selected && localLocked;
           return (
             <AnswerOption
               key={opt}
@@ -152,7 +162,9 @@ export function ChallengeRound({
               label={getOptionLabel(opt)}
               selected={selected}
               pending={pending}
-              correct={selected && answerState?.status === "settled" ? answerState.correct ?? null : null}
+              correct={
+                selected && answerState?.status === "settled" ? (answerState.correct ?? null) : null
+              }
               disabled={disabled || answered}
               onSelect={handleSelect}
             />
@@ -166,15 +178,9 @@ export function ChallengeRound({
           role="alert"
           className="mt-4 rounded-md border border-red-500/50 bg-red-500/10 p-4 text-sm"
         >
-          <p className="text-red-500">Failed to submit answer: {answerError}</p>
+          <p className="text-red-500">Could not submit your answer. Check your connection and try again.</p>
           {onRetry && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              onClick={onRetry}
-            >
+            <Button type="button" variant="outline" size="sm" className="mt-2" onClick={onRetry}>
               Retry
             </Button>
           )}

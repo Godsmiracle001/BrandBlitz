@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchDepositEvents, getDepositConfirmationCount } from "./deposit";
+import {
+  fetchDepositEvents,
+  generateDepositMemo,
+  getDepositConfirmationCount,
+  validateDepositMemo,
+} from "./deposit";
 import * as client from "./client";
 
 vi.mock("./client", () => ({
@@ -8,6 +13,22 @@ vi.mock("./client", () => ({
   getNetworkConfig: vi.fn(),
   withRetry: vi.fn((fn) => fn()),
 }));
+
+describe("deposit memo generation", () => {
+  it("creates unique Stellar-compatible text memos", () => {
+    const first = generateDepositMemo();
+    const second = generateDepositMemo();
+
+    expect(first).not.toBe(second);
+    expect(Buffer.byteLength(first, "utf8")).toBeLessThanOrEqual(28);
+    expect(validateDepositMemo(first)).toEqual({ valid: true, memo: first });
+    expect(validateDepositMemo(second)).toEqual({ valid: true, memo: second });
+  });
+
+  it("rejects memos that exceed Stellar's 28-byte text memo limit", () => {
+    expect(validateDepositMemo("a".repeat(29))).toMatchObject({ valid: false });
+  });
+});
 
 describe("fetchDepositEvents", () => {
   beforeEach(() => {

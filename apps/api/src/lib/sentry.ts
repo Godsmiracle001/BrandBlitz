@@ -115,3 +115,17 @@ export function captureExceptionSync(
   if (!_sentry) return;
   _sentry.captureException(err, context ? { extra: context } : undefined);
 }
+
+/**
+ * Report a non-exception event (e.g. a CSP violation) to Sentry.  Safe to
+ * call even when Sentry is not initialised — the call is a no-op in that
+ * case.
+ */
+export async function captureMessage(
+  message: string,
+  context?: Record<string, unknown>
+): Promise<void> {
+  const Sentry = await getSentry();
+  if (!Sentry) return;
+  Sentry.captureMessage(message, { level: "warning", extra: context });
+}

@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { pool, query } from "../index";
+import { encodeCursor, decodeCursorSafe } from "../pagination";
 
 export interface User {
   id: string;
@@ -30,6 +31,8 @@ export interface User {
   last_play_day: string | null;
   streak_repairs_this_month: number;
   streak_repair_available: boolean;
+  onboarding_completed: boolean;
+  last_active_at: string | null;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -46,31 +49,42 @@ export interface PublicUser {
 }
 
 export async function findUserByEmail(email: string): Promise<User | null> {
-  const result = await query<User>("SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL LIMIT 1", [email]);
+  const result = await query<User>(
+    "SELECT * FROM users WHERE email = $1 AND deleted_at IS NULL LIMIT 1",
+    [email]
+  );
   return result.rows[0] ?? null;
 }
 
 export async function findUserByGoogleId(googleId: string): Promise<User | null> {
-  const result = await query<User>("SELECT * FROM users WHERE google_id = $1 AND deleted_at IS NULL LIMIT 1", [googleId]);
+  const result = await query<User>(
+    "SELECT * FROM users WHERE google_id = $1 AND deleted_at IS NULL LIMIT 1",
+    [googleId]
+  );
   return result.rows[0] ?? null;
 }
 
 export async function findUserById(id: string): Promise<User | null> {
-  const result = await query<User>("SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL LIMIT 1", [id]);
+  const result = await query<User>(
+    "SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL LIMIT 1",
+    [id]
+  );
   return result.rows[0] ?? null;
 }
 
 export async function findUserByPhoneHash(phoneHash: string): Promise<User | null> {
-  const result = await query<User>("SELECT * FROM users WHERE phone_hash = $1 AND deleted_at IS NULL LIMIT 1", [
-    phoneHash,
-  ]);
+  const result = await query<User>(
+    "SELECT * FROM users WHERE phone_hash = $1 AND deleted_at IS NULL LIMIT 1",
+    [phoneHash]
+  );
   return result.rows[0] ?? null;
 }
 
 export async function findUserByReferralCode(referralCode: string): Promise<User | null> {
-  const result = await query<User>("SELECT * FROM users WHERE referral_code = $1 AND deleted_at IS NULL LIMIT 1", [
-    referralCode,
-  ]);
+  const result = await query<User>(
+    "SELECT * FROM users WHERE referral_code = $1 AND deleted_at IS NULL LIMIT 1",
+    [referralCode]
+  );
   return result.rows[0] ?? null;
 }
 
@@ -93,15 +107,10 @@ export async function setUserReferralCode(userId: string, referralCode: string):
   );
 }
 
+import { slugify } from "../../lib/slugify";
+
 function slugifyUsername(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .replace(/-{2,}/g, "-")
-    .slice(0, 24);
+  return slugify(value);
 }
 
 async function allocateUsername(
@@ -215,6 +224,19 @@ export async function updateUserProfile(
     [userId, displayName, newUsername]
   );
 
+  await query(
+    `INSERT INTO audit_log (actor_id, action, entity, entity_key, before, after)
+     VALUES ($1, 'update_profile', 'user', $1, $2, $3)`,
+    [
+      userId,
+      JSON.stringify({
+        display_name: current.rows[0].display_name,
+        username: current.rows[0].username,
+      }),
+      JSON.stringify({ display_name: displayName, username: newUsername }),
+    ]
+  );
+
   return { oldUsername, newUsername };
 }
 
@@ -301,9 +323,10 @@ export async function markPhoneVerified(userId: string, phoneHash: string): Prom
  * Soft-delete a user row.
  */
 export async function softDeleteUser(userId: string): Promise<void> {
-  await query("UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL", [
-    userId,
-  ]);
+  await query(
+    "UPDATE users SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+    [userId]
+  );
 }
 
 /**
@@ -330,7 +353,7 @@ export async function hardDeleteUser(userId: string): Promise<void> {
 export async function suspendUser(
   userId: string,
   reason: string,
-  adminId: string,
+  adminId: string
 ): Promise<User | null> {
   const result = await query<User>(
     `UPDATE users
@@ -341,7 +364,7 @@ export async function suspendUser(
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`,
-    [userId, reason, adminId],
+    [userId, reason, adminId]
   );
   return result.rows[0] ?? null;
 }
@@ -359,7 +382,7 @@ export async function unsuspendUser(userId: string): Promise<User | null> {
          updated_at = NOW()
      WHERE id = $1 AND deleted_at IS NULL
      RETURNING *`,
-    [userId],
+    [userId]
   );
   return result.rows[0] ?? null;
 }
@@ -371,10 +394,10 @@ export async function unsuspendUser(userId: string): Promise<User | null> {
 export async function listUsers(opts: {
   status?: "active" | "suspended";
   search?: string;
-  page?: number;
+  cursor?: string;
   pageSize?: number;
-}): Promise<{ users: User[]; total: number }> {
-  const { status, search, page = 1, pageSize = 20 } = opts;
+}): Promise<{ users: User[]; total: number; nextCursor: string | null }> {
+  const { status, search, cursor, pageSize = 20 } = opts;
   const conditions: string[] = ["deleted_at IS NULL"];
   const params: (string | number)[] = [];
   let paramIdx = 1;
@@ -387,35 +410,105 @@ export async function listUsers(opts: {
 
   if (search?.trim()) {
     conditions.push(
-      `(display_name ILIKE $${paramIdx} OR email ILIKE $${paramIdx} OR username ILIKE $${paramIdx})`,
+      `(display_name ILIKE $${paramIdx} OR email ILIKE $${paramIdx} OR username ILIKE $${paramIdx})`
     );
     params.push(`%${search.trim()}%`);
     paramIdx++;
   }
 
+  const cursorValues = decodeCursorSafe(cursor, ["suspended_at", "created_at", "id"]);
+
+  if (cursorValues) {
+    const suspendedAt = cursorValues.suspended_at;
+    const createdAt = cursorValues.created_at;
+    const id = cursorValues.id as string;
+
+    if (suspendedAt === null) {
+      conditions.push(
+        `(suspended_at IS NULL AND (created_at < $${paramIdx} OR (created_at = $${paramIdx} AND id < $${paramIdx + 1})))`
+      );
+      params.push(createdAt as string, id);
+      paramIdx += 2;
+    } else {
+      conditions.push(
+        `(suspended_at IS NOT NULL AND (suspended_at < $${paramIdx} OR (suspended_at = $${paramIdx} AND created_at < $${paramIdx + 1}) OR (suspended_at = $${paramIdx} AND created_at = $${paramIdx + 1} AND id < $${paramIdx + 2})))`
+      );
+      params.push(suspendedAt as string, createdAt as string, id);
+      paramIdx += 3;
+    }
+  }
+
   const where = conditions.join(" AND ");
-  const offset = (page - 1) * pageSize;
 
   const countResult = await query<{ count: string }>(
     `SELECT COUNT(*) AS count FROM users WHERE ${where}`,
-    params,
+    params.slice(
+      0,
+      cursorValues ? paramIdx - (cursorValues.suspended_at === null ? 2 : 3) : paramIdx - 1
+    )
   );
   const total = parseInt(countResult.rows[0]?.count ?? "0", 10);
 
-  const dataParams = [...params, pageSize, offset];
+  params.push(pageSize);
   const result = await query<User>(
     `SELECT * FROM users WHERE ${where}
-     ORDER BY suspended_at DESC NULLS LAST, created_at DESC
-     LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
-    dataParams,
+     ORDER BY suspended_at DESC NULLS LAST, created_at DESC, id DESC
+     LIMIT $${paramIdx}`,
+    params
   );
 
-  return { users: result.rows, total };
+  const users = result.rows;
+  const nextCursor: string | null =
+    users.length === pageSize
+      ? encodeCursor({
+          suspended_at: users[users.length - 1].suspended_at,
+          created_at: users[users.length - 1].created_at,
+          id: users[users.length - 1].id,
+        })
+      : null;
+
+  return { users, total, nextCursor };
 }
 
 export async function updateLastLogin(userId: string): Promise<void> {
-  await query(
-    "UPDATE users SET last_login = NOW(), updated_at = NOW() WHERE id = $1",
-    [userId],
+  await query("UPDATE users SET last_login = NOW(), updated_at = NOW() WHERE id = $1", [userId]);
+}
+
+/**
+ * Persist that the user has seen (and dismissed) the first-run challenge
+ * tutorial (issue #1040). Idempotent — completing it twice is a no-op.
+ */
+export async function markOnboardingCompleted(userId: string): Promise<boolean> {
+  const result = await query<{ onboarding_completed: boolean }>(
+    `UPDATE users
+     SET onboarding_completed = TRUE, updated_at = NOW()
+     WHERE id = $1 AND deleted_at IS NULL
+     RETURNING onboarding_completed`,
+    [userId]
   );
+  return result.rows[0]?.onboarding_completed ?? false;
+}
+
+export interface UserSearchResult {
+  id: string;
+  username: string;
+  avatar_url: string | null;
+  total_earned_usdc: string;
+}
+
+export async function searchUsersByUsername(
+  prefix: string,
+  page: number,
+  pageSize: number
+): Promise<UserSearchResult[]> {
+  const result = await query<UserSearchResult>(
+    `SELECT id, username, avatar_url, total_earned_usdc
+     FROM users
+     WHERE deleted_at IS NULL
+       AND username ILIKE $1
+     ORDER BY username ASC
+     LIMIT $2 OFFSET $3`,
+    [`${prefix}%`, pageSize, (page - 1) * pageSize]
+  );
+  return result.rows;
 }

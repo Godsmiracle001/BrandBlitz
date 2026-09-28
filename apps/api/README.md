@@ -9,6 +9,7 @@ Express 5 REST API for BrandBlitz. Handles authentication, game sessions, scorin
 - [Overview](#overview)
 - [Directory Structure](#directory-structure)
 - [Getting Started](#getting-started)
+- [Operational Scripts](#operational-scripts)
 - [Environment Variables](#environment-variables)
 - [API Reference](#api-reference)
   - [Auth](#auth-routes)
@@ -109,6 +110,77 @@ pnpm --filter @brandblitz/api dev:worker
 The API listens on `PORT` (default `3001`). In the full Docker stack, Nginx proxies `/api/*` → `http://api:3001/`.
 
 If you are applying schema changes locally, run `pnpm --filter @brandblitz/api migrate`. The dry-run form is `pnpm --filter @brandblitz/api migrate:dryrun`.
+
+To fire test requests at a running API, open [`requests.http`](./requests.http) with the VS Code REST Client extension or the JetBrains HTTP Client. It covers auth, challenges and leaderboard routes from [`docs/openapi.yml`](../../docs/openapi.yml); set `@baseUrl` and paste an access token for authenticated calls (`Authorization: Bearer <accessToken>`).
+
+---
+
+## Operational Scripts
+
+Dev-time CLI helpers, all run from the monorepo root via `pnpm --filter @brandblitz/api <script>`:
+
+### `seed`
+
+Populates the database with deterministic local fixtures (50 users, 3 brands, 6
+challenges, 200 game sessions). Idempotent — safe to re-run.
+
+```bash
+pnpm --filter @brandblitz/api seed                 # seed once
+pnpm --filter @brandblitz/api seed -- --reset      # wipe seed fixtures, then re-seed
+```
+
+Set `SEED_DEV=1` to auto-seed on `docker compose up` (see `docker-compose.override.yml`).
+
+The placeholder brand logos the seed references live in
+[`scripts/fixtures/`](./scripts/fixtures/README.md). That README lists each fixture file and
+explains how it relates to `seed.ts` and the root-level `scripts/seed-e2e-challenge.ts`.
+
+### `db:reset`
+
+Fully resets local PostgreSQL: drops and recreates the schema, reapplies every
+migration, and (with `--seed`) re-seeds the fixtures.
+
+```bash
+pnpm --filter @brandblitz/api db:reset                 # wipe + re-migrate
+pnpm --filter @brandblitz/api db:reset --seed          # ...and re-seed
+pnpm db:reset -- --seed                                # same from the monorepo root
+```
+
+This wipes **all** data — it refuses non-local `DATABASE_URL` hosts unless `--force` is passed.
+
+### `admin:grant`
+
+Grants the `admin` role to an existing user by email:
+
+```bash
+pnpm --filter @brandblitz/api admin:grant someone@example.com
+```
+
+Prints the granted user's email and id on success, or errors if the user does not exist.
+
+### `gen:openapi`
+
+Regenerates [`docs/openapi.yml`](../../docs/openapi.yml) from the zod route
+schemas registered in `src/routes/openapi/*.openapi.ts`. Run it after any
+route/schema change and commit the diff — CI (`gen:openapi:check`) fails when
+the committed spec drifts from the actual routes.
+
+```bash
+pnpm --filter @brandblitz/api gen:openapi              # one-shot regeneration
+pnpm --filter @brandblitz/api gen:openapi -- --watch   # regenerate on every change under src/routes/
+```
+
+To keep `docs/openapi.yml` in sync while you develop, run the watcher (the
+`dev:openapi` script) alongside the API dev server in a second terminal:
+
+```bash
+pnpm --filter @brandblitz/api dev          # terminal 1 — API dev server (tsx watch)
+pnpm --filter @brandblitz/api dev:openapi  # terminal 2 — rewrites docs/openapi.yml on route changes
+```
+
+`--watch` uses `fs.watch` (recursive) on `src/routes/` and respawns the
+generator in a fresh process per change, so its output is byte-identical to a
+one-shot run. Stop it with `Ctrl-C`.
 
 ---
 

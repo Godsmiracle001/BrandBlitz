@@ -7,7 +7,7 @@ Operational playbooks for BrandBlitz on-call engineers. Each runbook covers one 
 ## Index
 
 | Runbook | Description |
-|---|---|
+| --- | --- |
 | [horizon-outage.md](horizon-outage.md) | Stellar Horizon API is degraded or unreachable — payouts blocked |
 | [hot-wallet-low-balance.md](hot-wallet-low-balance.md) | Hot wallet USDC balance too low to process payouts |
 | [payout-stuck-in-queue.md](payout-stuck-in-queue.md) | Payout jobs stuck in BullMQ — recipients not receiving USDC |

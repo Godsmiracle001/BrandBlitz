@@ -7,6 +7,7 @@ describe("useFingerprint", () => {
     vi.clearAllMocks();
     // Clear environment variable
     delete (process.env as any).NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY;
+    delete (window as any).fpPromise;
   });
 
   it("should return null when NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY is not set", async () => {
@@ -18,25 +19,29 @@ describe("useFingerprint", () => {
   });
 
   it("should not call FingerprintJS SDK during tests when not configured", async () => {
-    const importSpy = vi.spyOn(require("@fingerprintjs/fingerprintjs-pro-react"), "default", "get");
-
     const { result } = renderHook(() => useFingerprint());
 
     await waitFor(() => {
       expect(result.current).toBe(null);
     });
+  });
 
-    // Verify SDK was not imported
-    expect(importSpy).not.toHaveBeenCalled();
+  it("should return the visitorId collected by the FingerprintJS agent", async () => {
+    process.env.NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY = "test-key";
+    const get = vi.fn().mockResolvedValue({ visitorId: "visitor-id" });
+    (window as any).fpPromise = Promise.resolve({ get });
+
+    const { result } = renderHook(() => useFingerprint());
+
+    await waitFor(() => {
+      expect(result.current).toBe("visitor-id");
+    });
+    expect(get).toHaveBeenCalledOnce();
   });
 
   it("should gracefully handle FingerprintJS load failures", async () => {
     process.env.NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY = "test-key";
-
-    // Mock the import to throw an error
-    vi.mock("@fingerprintjs/fingerprintjs-pro-react", () => {
-      throw new Error("Failed to load FingerprintJS");
-    });
+    (window as any).fpPromise = Promise.reject(new Error("Failed to load FingerprintJS"));
 
     const { result } = renderHook(() => useFingerprint());
 

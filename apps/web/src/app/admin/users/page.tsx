@@ -1,229 +1,166 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { createApiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { Label } from "@/components/ui/label";
 
 interface AdminUser {
   id: string;
-  email: string;
-  displayName: string;
   username: string | null;
-  avatarUrl: string | null;
-  role: string;
-  status: "active" | "suspended";
-  suspensionReason: string | null;
-  suspendedAt: string | null;
+  email: string;
   createdAt: string;
+  suspendedAt: string | null;
+  fraudScore: number;
+  totalPayouts: number;
 }
 
-interface Pagination {
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
-}
-
-type StatusFilter = "all" | "active" | "suspended";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function statusVariant(
-  status: string,
-): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "suspended") return "destructive";
-  return "default";
-}
-
-// ─── Component ────────────────────────────────────────────────────────────────
+type OrderBy = "createdAt" | "fraudScore";
 
 export default function AdminUsersPage() {
-  const { data: session, status: authStatus } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const apiToken = (session as { apiToken?: string } | null)?.apiToken;
   const userRole = (session?.user as { role?: string } | undefined)?.role;
 
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [pagination, setPagination] = useState<Pagination>({
-    page: 1,
-    pageSize: 20,
-    total: 0,
-    totalPages: 1,
-  });
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("suspended");
-  const [search, setSearch] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-
-  // Suspend dialog state
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogMode, setDialogMode] = useState<"suspend" | "unsuspend">("suspend");
-  const [dialogUserId, setDialogUserId] = useState("");
-  const [dialogUserName, setDialogUserName] = useState("");
-  const [dialogReason, setDialogReason] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-
-  // ─── Auth guard ──────────────────────────────────────────────────────────
+  const [minFraudScore, setMinFraudScore] = useState(0);
+  const [filterInput, setFilterInput] = useState("0");
+  const [orderBy, setOrderBy] = useState<OrderBy>("createdAt");
+  const [currentCursor, setCurrentCursor] = useState<string | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [cursorHistory, setCursorHistory] = useState<Array<string | null>>([]);
 
   useEffect(() => {
-    if (authStatus === "unauthenticated") {
+    if (status === "unauthenticated") {
       router.push("/login");
-    } else if (authStatus === "authenticated" && userRole !== "admin") {
+    } else if (status === "authenticated" && userRole !== "admin") {
       router.push("/dashboard");
     }
-  }, [authStatus, userRole, router]);
-
-  // ─── Data loading ────────────────────────────────────────────────────────
+  }, [status, userRole, router]);
 
   const loadUsers = useCallback(
-    async (page = 1) => {
+    async (cursor: string | null) => {
       if (!apiToken) return;
       setLoading(true);
       try {
         const api = createApiClient(apiToken);
-        const params: Record<string, string | number> = { page, pageSize: 20 };
-        if (statusFilter !== "all") params.status = statusFilter;
-        if (search.trim()) params.search = search.trim();
-
-        const res = await api.get("/admin/users", { params });
-        setUsers(res.data.users);
-        setPagination(res.data.pagination);
+        const response = await api.get("/admin/users", {
+          params: {
+            limit: 25,
+            minFraudScore,
+            orderBy,
+            ...(cursor ? { cursor } : {}),
+          },
+        });
+        setUsers(response.data.users);
+        setNextCursor(response.data.nextCursor);
+        setCurrentCursor(cursor);
       } catch {
         setUsers([]);
+        setNextCursor(null);
       } finally {
         setLoading(false);
       }
     },
-    [apiToken, statusFilter, search],
+    [apiToken, minFraudScore, orderBy]
   );
 
   useEffect(() => {
-    if (authStatus === "authenticated" && userRole === "admin") {
-      void loadUsers(1);
+    if (status === "authenticated" && userRole === "admin") {
+      setCursorHistory([]);
+      void loadUsers(null);
     }
-  }, [loadUsers, authStatus, userRole]);
+  }, [loadUsers, status, userRole]);
 
-  // ─── Search handler ──────────────────────────────────────────────────────
-
-  function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
-    setSearch(searchInput);
+  function applyFraudFilter(event: React.FormEvent) {
+    event.preventDefault();
+    const parsed = Number.parseInt(filterInput, 10);
+    setMinFraudScore(Number.isFinite(parsed) && parsed >= 0 ? parsed : 0);
   }
 
-  // ─── Dialog helpers ──────────────────────────────────────────────────────
-
-  function openSuspendDialog(user: AdminUser) {
-    setDialogMode("suspend");
-    setDialogUserId(user.id);
-    setDialogUserName(user.displayName || user.email);
-    setDialogReason("");
-    setDialogOpen(true);
+  function goNext() {
+    if (!nextCursor) return;
+    setCursorHistory((history) => [...history, currentCursor]);
+    void loadUsers(nextCursor);
   }
 
-  function openUnsuspendDialog(user: AdminUser) {
-    setDialogMode("unsuspend");
-    setDialogUserId(user.id);
-    setDialogUserName(user.displayName || user.email);
-    setDialogReason("");
-    setDialogOpen(true);
+  function goPrevious() {
+    const previous = cursorHistory.at(-1);
+    if (previous === undefined) return;
+    setCursorHistory((history) => history.slice(0, -1));
+    void loadUsers(previous);
   }
 
-  async function handleSubmitAction() {
-    if (!apiToken) return;
-    if (dialogMode === "suspend" && !dialogReason.trim()) return;
-
-    setSubmitting(true);
-    const api = createApiClient(apiToken);
-
-    try {
-      if (dialogMode === "suspend") {
-        await api.patch(`/admin/users/${dialogUserId}/suspend`, {
-          reason: dialogReason.trim(),
-        });
-      } else {
-        await api.patch(`/admin/users/${dialogUserId}/unsuspend`);
-      }
-      setDialogOpen(false);
-      await loadUsers(pagination.page);
-    } catch {
-      // Toast is handled by the API interceptor
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  // ─── Render ──────────────────────────────────────────────────────────────
-
-  if (authStatus === "loading" || (authStatus === "authenticated" && userRole !== "admin")) {
+  if (status === "loading" || (status === "authenticated" && userRole !== "admin")) {
     return null;
   }
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">User Management</h1>
-        <span className="text-sm text-gray-500">{pagination.total} users</span>
+    <main className="mx-auto max-w-7xl px-4 py-8">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold">Fraud Review</h1>
+        <p className="mt-1 text-sm text-[var(--muted-foreground)]">
+          Review account risk and payout activity.
+        </p>
       </div>
 
-      {/* Filter & search bar */}
       <Card className="mb-6">
-        <CardContent className="pt-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <Label className="text-sm font-medium">Status:</Label>
-            {(["all", "active", "suspended"] as StatusFilter[]).map((s) => (
-              <Button
-                key={s}
-                variant={statusFilter === s ? "default" : "outline"}
-                size="sm"
-                onClick={() => setStatusFilter(s)}
-              >
-                {s.charAt(0).toUpperCase() + s.slice(1)}
-              </Button>
-            ))}
-
-            <div className="ml-auto" />
-
-            <form onSubmit={handleSearch} className="flex gap-2">
+        <CardContent className="flex flex-wrap items-end gap-4 pt-6">
+          <form onSubmit={applyFraudFilter} className="flex items-end gap-2">
+            <div className="space-y-1">
+              <Label htmlFor="min-fraud-score">Minimum fraud score</Label>
               <Input
-                placeholder="Search name, email, or username…"
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                className="w-64"
+                id="min-fraud-score"
+                type="number"
+                min={0}
+                value={filterInput}
+                onChange={(event) => setFilterInput(event.target.value)}
+                className="w-40"
               />
-              <Button type="submit" size="sm" variant="outline">
-                Search
+            </div>
+            <Button type="submit" variant="outline">
+              Apply
+            </Button>
+          </form>
+
+          <div className="space-y-1">
+            <Label>Order by</Label>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant={orderBy === "createdAt" ? "default" : "outline"}
+                onClick={() => setOrderBy("createdAt")}
+              >
+                Newest
               </Button>
-            </form>
+              <Button
+                size="sm"
+                variant={orderBy === "fraudScore" ? "default" : "outline"}
+                onClick={() => setOrderBy("fraudScore")}
+              >
+                Fraud score
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Users table */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Users</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
-            <div className="py-12 text-center text-sm text-gray-500">Loading…</div>
+            <div className="py-12 text-center text-sm text-[var(--muted-foreground)]">Loading…</div>
           ) : users.length === 0 ? (
-            <div className="py-12 text-center text-sm text-gray-500">
-              No users found.
+            <div className="py-12 text-center text-sm text-[var(--muted-foreground)]">
+              No users match this fraud threshold.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -232,71 +169,23 @@ export default function AdminUsersPage() {
                   <tr className="border-b bg-gray-50 text-left text-xs font-medium text-gray-500">
                     <th className="px-4 py-3">User</th>
                     <th className="px-4 py-3">Username</th>
-                    <th className="px-4 py-3">Role</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Reason</th>
-                    <th className="px-4 py-3">Suspended at</th>
+                    <th className="px-4 py-3 text-right">Fraud score</th>
+                    <th className="px-4 py-3 text-right">Payouts</th>
+                    <th className="px-4 py-3">Suspended</th>
                     <th className="px-4 py-3">Joined</th>
-                    <th className="px-4 py-3">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {users.map((user) => (
-                    <tr
-                      key={user.id}
-                      className="border-b hover:bg-gray-50"
-                    >
+                    <tr key={user.id} className="border-b last:border-0 hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium">{user.email}</td>
+                      <td className="px-4 py-3">{user.username ?? "—"}</td>
+                      <td className="px-4 py-3 text-right font-mono">{user.fraudScore}</td>
+                      <td className="px-4 py-3 text-right font-mono">{user.totalPayouts}</td>
                       <td className="px-4 py-3">
-                        <div className="font-medium">{user.displayName}</div>
-                        <div className="text-xs text-gray-500">{user.email}</div>
+                        {user.suspendedAt ? new Date(user.suspendedAt).toLocaleDateString() : "—"}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
-                        {user.username ?? "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="outline">{user.role}</Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant={statusVariant(user.status)}>
-                          {user.status}
-                        </Badge>
-                      </td>
-                      <td className="max-w-[200px] px-4 py-3">
-                        <span
-                          className="truncate text-xs text-gray-600 block"
-                          title={user.suspensionReason ?? undefined}
-                        >
-                          {user.suspensionReason ?? "—"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
-                        {user.suspendedAt
-                          ? new Date(user.suspendedAt).toLocaleDateString()
-                          : "—"}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-gray-500">
-                        {new Date(user.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-4 py-3">
-                        {user.status === "active" && user.role !== "admin" && (
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => openSuspendDialog(user)}
-                          >
-                            Suspend
-                          </Button>
-                        )}
-                        {user.status === "suspended" && (
-                          <Button
-                            size="sm"
-                            variant="default"
-                            onClick={() => openUnsuspendDialog(user)}
-                          >
-                            Unsuspend
-                          </Button>
-                        )}
-                      </td>
+                      <td className="px-4 py-3">{new Date(user.createdAt).toLocaleDateString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -306,86 +195,18 @@ export default function AdminUsersPage() {
         </CardContent>
       </Card>
 
-      {/* Pagination */}
-      {pagination.totalPages > 1 && (
-        <div className="mt-4 flex items-center justify-between text-sm">
-          <span className="text-gray-500">
-            Page {pagination.page} of {pagination.totalPages}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pagination.page <= 1}
-              onClick={() => void loadUsers(pagination.page - 1)}
-            >
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={pagination.page >= pagination.totalPages}
-              onClick={() => void loadUsers(pagination.page + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* Suspend / Unsuspend dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {dialogMode === "suspend" ? "Suspend" : "Unsuspend"} user
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <p className="text-sm text-gray-600">
-              {dialogMode === "suspend"
-                ? `Suspending "${dialogUserName}" will block them from entering paid challenges. They will retain read-only access.`
-                : `Unsuspending "${dialogUserName}" will restore full access.`}
-            </p>
-            {dialogMode === "suspend" && (
-              <>
-                <Label htmlFor="suspend-reason">
-                  Suspension reason <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="suspend-reason"
-                  placeholder="e.g. Suspected multi-accounting"
-                  value={dialogReason}
-                  onChange={(e) => setDialogReason(e.target.value)}
-                />
-              </>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDialogOpen(false)}
-              disabled={submitting}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant={dialogMode === "suspend" ? "destructive" : "default"}
-              onClick={handleSubmitAction}
-              disabled={
-                submitting ||
-                (dialogMode === "suspend" && !dialogReason.trim())
-              }
-            >
-              {submitting
-                ? "Saving…"
-                : dialogMode === "suspend"
-                  ? "Suspend user"
-                  : "Unsuspend user"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <Button
+          variant="outline"
+          disabled={cursorHistory.length === 0 || loading}
+          onClick={goPrevious}
+        >
+          Previous
+        </Button>
+        <Button variant="outline" disabled={!nextCursor || loading} onClick={goNext}>
+          Next
+        </Button>
+      </div>
+    </main>
   );
 }

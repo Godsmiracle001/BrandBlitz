@@ -1,5 +1,15 @@
 # Database Index Reference
 
+> **Large / hot tables that require out-of-band index creation.**
+> `game_sessions`, `payouts`, and `challenges` each receive heavy
+> concurrent write traffic during active challenges. Adding an index
+> to any of these tables through the normal migration runner will take
+> a `SHARE ROW EXCLUSIVE` lock for the full duration of the migration
+> (the runner wraps every file in a transaction; `CREATE INDEX CONCURRENTLY`
+> cannot be used). If a new index is needed on one of these tables in a
+> production database that cannot tolerate a write outage, follow the
+> out-of-band procedure in `docs/database/migrations.md`.
+
 ## challenges.deposit_memo — `idx_challenges_deposit_memo`
 
 ### Background

@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { defineProject } from "vitest/config";
+import { sharedCoverageOptions } from "../../packages/config/src/vitest-base";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 const sharedSetupFile = path.resolve(projectRoot, "../../tests/setup.ts");
@@ -8,6 +9,8 @@ const sharedSetupFile = path.resolve(projectRoot, "../../tests/setup.ts");
 export default defineProject({
   resolve: {
     alias: {
+      "@": path.resolve(projectRoot, "src"),
+      "@brandblitz/config": path.resolve(projectRoot, "../../packages/config/src"),
       "@brandblitz/storage": path.resolve(projectRoot, "../../packages/storage/src"),
       "@brandblitz/stellar": path.resolve(projectRoot, "../../packages/stellar/src"),
     },
@@ -22,8 +25,7 @@ export default defineProject({
     setupFiles: [sharedSetupFile],
     include: ["src/**/*.test.ts"],
     coverage: {
-      provider: "v8",
-      reporter: ["text", "html"],
+      ...sharedCoverageOptions,
       reportsDirectory: "./coverage",
       thresholds: {
         branches: 0,

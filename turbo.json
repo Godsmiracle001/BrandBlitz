@@ -20,6 +20,10 @@
     },
     "type-check": {
       "dependsOn": ["^build"]
+    },
+    "type-check:watch": {
+      "cache": false,
+      "persistent": true
     }
   }
 }

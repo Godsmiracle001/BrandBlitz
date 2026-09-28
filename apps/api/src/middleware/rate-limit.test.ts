@@ -51,10 +51,12 @@ function makeApp(limiter: Limiter, userSub?: string) {
 
 /** Fires `n` requests from `ip`, all expected to succeed (200). */
 async function exhaust(app: express.Express, ip: string, n: number) {
-  for (let i = 0; i < n; i++) {
-    const res = await request(app).get("/").set("X-Forwarded-For", ip);
+  const responses = await Promise.all(
+    Array.from({ length: n }, () => request(app).get("/").set("X-Forwarded-For", ip)),
+  );
+  responses.forEach((res, i) => {
     expect(res.status, `request ${i + 1}/${n} should be 200`).toBe(200);
-  }
+  });
 }
 
 // ─── Per-policy boundary tests ─────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { query } from "../index";
+import { query, pool } from "../index";
 
 export interface GdprErasureRequest {
   id: string;
@@ -91,26 +91,107 @@ export async function markErasureExecuted(requestId: string): Promise<void> {
 }
 
 /**
- * Anonymise all PII in the users row.
- * The row is retained (not deleted) so FK references from game_sessions and
- * payouts remain valid and financial records are preserved for compliance.
+ * Audit-log action recorded when a user's data has been fully anonymised.
+ * Written to `audit_log` as compliance evidence at erasure completion.
+ */
+export const GDPR_ERASURE_ACTION = "gdpr_erasure_completed";
+
+/**
+ * The exhaustive list of `table.column` values cleared by {@link anonymizeUser}.
+ * Exposed via `GET /legal/erasure` as a data-subject-facing manifest and written
+ * into the completion audit-log entry so compliance can prove what was erased.
+ *
+ * Note: the server-side device fingerprint is persisted on `game_sessions.device_id`
+ * (there is no `device_fingerprint` column in this schema); stored fingerprint hashes
+ * live under the `fingerprint` key of the `fraud_flags.details` JSONB blob.
+ */
+export const GDPR_ERASURE_CLEARED_COLUMNS = [
+  "users.email",
+  "users.google_id",
+  "users.display_name",
+  "users.username",
+  "users.avatar_url",
+  "users.phone_hash",
+  "users.phone_verified",
+  "users.phone_verified_at",
+  "users.stellar_address",
+  "users.embedded_wallet_address",
+  "game_sessions.device_id",
+  "fraud_flags.details.fingerprint",
+] as const;
+
+/**
+ * Anonymise all PII linked to a user in a single transaction.
+ *
+ * The users row is retained (not deleted) so FK references from game_sessions and
+ * payouts remain valid and financial records are preserved for compliance. Within
+ * the same transaction we also:
+ *   - null the device fingerprint (`game_sessions.device_id`) on every session,
+ *   - strip stored fingerprint hashes from the user's `fraud_flags` rows,
+ *   - write completion evidence (timestamp + cleared table.columns) to `audit_log`.
+ *
+ * Atomicity guarantees the compliance evidence is only recorded if — and only if —
+ * every PII field was actually cleared.
  */
 export async function anonymizeUser(userId: string): Promise<void> {
   const token = randomUUID();
-  await query(
-    `UPDATE users SET
-       email                   = $2,
-       google_id               = NULL,
-       display_name            = 'Deleted User',
-       username                = $3,
-       avatar_url              = NULL,
-       phone_hash              = NULL,
-       phone_verified          = FALSE,
-       phone_verified_at       = NULL,
-       stellar_address         = NULL,
-       embedded_wallet_address = NULL,
-       updated_at              = NOW()
-     WHERE id = $1`,
-    [userId, `deleted_${token}@gdpr.invalid`, `deleted_${token}`]
-  );
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      `UPDATE users SET
+         email                   = $2,
+         google_id               = NULL,
+         display_name            = 'Deleted User',
+         username                = $3,
+         avatar_url              = NULL,
+         phone_hash              = NULL,
+         phone_verified          = FALSE,
+         phone_verified_at       = NULL,
+         stellar_address         = NULL,
+         embedded_wallet_address = NULL,
+         updated_at              = NOW()
+       WHERE id = $1`,
+      [userId, `deleted_${token}@gdpr.invalid`, `deleted_${token}`]
+    );
+
+    // Anonymise the device fingerprint stored on the user's game sessions.
+    await client.query(
+      `UPDATE game_sessions
+         SET device_id = NULL, updated_at = NOW()
+       WHERE user_id = $1`,
+      [userId]
+    );
+
+    // Clear stored fingerprint hashes from the user's fraud flags (kept in details JSONB).
+    await client.query(
+      `UPDATE fraud_flags
+         SET details = details - 'fingerprint', updated_at = NOW()
+       WHERE user_id = $1 AND details ? 'fingerprint'`,
+      [userId]
+    );
+
+    // Compliance evidence: completion timestamp + list of cleared table.columns.
+    await client.query(
+      `INSERT INTO audit_log (actor_id, action, entity, entity_key, after)
+       VALUES (NULL, $2, 'user', $1, $3)`,
+      [
+        userId,
+        GDPR_ERASURE_ACTION,
+        JSON.stringify({
+          completedAt: new Date().toISOString(),
+          clearedColumns: GDPR_ERASURE_CLEARED_COLUMNS,
+        }),
+      ]
+    );
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

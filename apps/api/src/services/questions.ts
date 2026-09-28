@@ -14,11 +14,19 @@ type QuestionDraft = Omit<ChallengeQuestion, "id">;
  * so unknown brands work perfectly. Correct answers come from brand inputs.
  * Distractors are generated from other available brand data.
  */
+type RoundTemplateOverride = {
+  question_text?: string;
+  prompt_type?: string;
+};
+
 export function generateChallengeQuestions(
   challengeId: string,
   brand: Brand,
   distractorPool: Pick<Brand, "name" | "tagline" | "usp">[]
 ): QuestionDraft[] {
+  // Per-round overrides from brand.question_template; null/undefined = global defaults.
+  const tpl = (brand.question_template ?? {}) as Record<string, RoundTemplateOverride>;
+
   const questions: QuestionDraft[] = [];
 
   // — Round 1: Tagline recognition —
@@ -35,8 +43,8 @@ export function generateChallengeQuestions(
       challenge_id: challengeId,
       round: 1,
       question_type: "which_tagline",
-      prompt_type: "logo",
-      question_text: `Which tagline belongs to this brand?`,
+      prompt_type: (tpl.round_1?.prompt_type ?? "logo") as QuestionDraft["prompt_type"],
+      question_text: tpl.round_1?.question_text ?? `Which tagline belongs to this brand?`,
       correct_answer: brand.tagline,
       option_a: options[0],
       option_b: options[1],
@@ -60,8 +68,9 @@ export function generateChallengeQuestions(
       challenge_id: challengeId,
       round: 2,
       question_type: "which_brand",
-      prompt_type: "tagline",
-      question_text: `Which brand is described by this claim: ${brand.usp}?`,
+      prompt_type: (tpl.round_2?.prompt_type ?? "tagline") as QuestionDraft["prompt_type"],
+      question_text:
+        tpl.round_2?.question_text ?? `Which brand is described by this claim: ${brand.usp}?`,
       correct_answer: brand.name,
       option_a: options[0],
       option_b: options[1],
@@ -85,8 +94,8 @@ export function generateChallengeQuestions(
       challenge_id: challengeId,
       round: 3,
       question_type: "which_product",
-      prompt_type: "productImage1",
-      question_text: `Which brand makes this product?`,
+      prompt_type: (tpl.round_3?.prompt_type ?? "productImage1") as QuestionDraft["prompt_type"],
+      question_text: tpl.round_3?.question_text ?? `Which brand makes this product?`,
       correct_answer: brand.name,
       option_a: options[0],
       option_b: options[1],
@@ -99,6 +108,7 @@ export function generateChallengeQuestions(
   // Ensure exactly 3 rounds — fallback to brand name recognition if data is sparse
   while (questions.length < 3) {
     const round = (questions.length + 1) as 1 | 2 | 3;
+    const roundKey = `round_${round}` as "round_1" | "round_2" | "round_3";
     const distractors = pickDistractors(
       distractorPool.map((d) => d.name),
       brand.name,
@@ -109,8 +119,8 @@ export function generateChallengeQuestions(
       challenge_id: challengeId,
       round,
       question_type: "which_brand",
-      prompt_type: "logo",
-      question_text: `What is the name of this brand?`,
+      prompt_type: (tpl[roundKey]?.prompt_type ?? "logo") as QuestionDraft["prompt_type"],
+      question_text: tpl[roundKey]?.question_text ?? `What is the name of this brand?`,
       correct_answer: brand.name,
       option_a: options[0],
       option_b: options[1],
@@ -148,4 +158,40 @@ function shuffle<T>(array: T[]): T[] {
 
 function optionLetter(index: number): "A" | "B" | "C" | "D" {
   return (["A", "B", "C", "D"] as const)[index] ?? "A";
+}
+
+export interface QuestionPreview {
+  text: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
+
+/**
+ * Draft-only variant of generateChallengeQuestions for the preview endpoint
+ * (issue #467). Reuses the same deterministic round generation but returns a
+ * flat text/options/correctIndex/explanation shape and does not require a
+ * persisted challenge_id. `count` cycles through the 3 rounds to fill out
+ * however many preview questions were requested.
+ */
+export function generateQuestionPreview(
+  brand: Brand,
+  distractorPool: Pick<Brand, "name" | "tagline" | "usp">[],
+  count: number
+): QuestionPreview[] {
+  const rounds = generateChallengeQuestions("preview", brand, distractorPool);
+  if (rounds.length === 0) return [];
+
+  const previews: QuestionPreview[] = [];
+  for (let i = 0; i < count; i++) {
+    const round = rounds[i % rounds.length];
+    const options = [round.option_a, round.option_b, round.option_c, round.option_d];
+    previews.push({
+      text: round.question_text,
+      options,
+      correctIndex: options.indexOf(round.correct_answer),
+      explanation: `The correct answer is "${round.correct_answer}".`,
+    });
+  }
+  return previews;
 }

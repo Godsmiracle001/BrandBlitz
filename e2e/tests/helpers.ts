@@ -105,3 +105,43 @@ export async function seedActiveChallenge(
     brandId: brandPayload.brand.id,
   };
 }
+
+export async function seedFraudFlag(
+  request: APIRequestContext,
+  sessionId: string,
+  userId: string,
+  flagType: string = "reaction_time_anomaly"
+): Promise<string> {
+  const dbUrl = process.env.DATABASE_URL ?? "postgresql://brandblitz:brandblitz_dev@localhost:5432/brandblitz";
+  const response = await request.post(`${API_BASE_URL}/admin/test/seed-fraud-flag`, {
+    data: { sessionId, userId, flagType },
+  });
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as { flagId: string };
+  return payload.flagId;
+}
+
+export async function makeUserAdmin(
+  request: APIRequestContext,
+  userId: string
+): Promise<void> {
+  const response = await request.post(`${API_BASE_URL}/admin/test/promote-to-admin`, {
+    data: { userId },
+  });
+  expect(response.ok()).toBeTruthy();
+}
+
+export async function getFraudFlagsFromDb(
+  request: APIRequestContext,
+  status?: string
+): Promise<Array<any>> {
+  const params = new URLSearchParams();
+  if (status) params.append("status", status);
+
+  const response = await request.get(
+    `${API_BASE_URL}/admin/test/fraud-flags?${params.toString()}`
+  );
+  expect(response.ok()).toBeTruthy();
+  const payload = (await response.json()) as { flags: Array<any> };
+  return payload.flags;
+}

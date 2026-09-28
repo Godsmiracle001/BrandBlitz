@@ -4,20 +4,24 @@ import { getChallengeById, getChallengeQuestions } from "../db/queries/challenge
 import {
   getSession,
   markWarmupStarted,
+  markWarmupCompleted,
   markChallengeStarted,
   recordRoundScore,
   finishSession,
   storeSessionHmac,
   deleteOpenSession,
+  abandonSession,
 } from "../db/queries/sessions";
-import { calculateRoundScore, completeWarmupWithLock, validateAnswer, validateRoundScore } from "../services/scoring";
+import { calculateRoundScore, validateAnswer, validateRoundScore } from "../services/scoring";
 import { authenticate } from "../middleware/authenticate";
 import { requireActiveUser } from "../middleware/require-active-user";
 import {
   enforceOneSessionPerChallenge,
   validateReactionTime,
   validateDeviceFingerprint,
+  detectClockSkew,
   assertValidTotalScore,
+  requireSessionStartAllowed,
 } from "../middleware/anti-cheat";
 import { createError } from "../middleware/error";
 import { challengeStartLimiter } from "../middleware/rate-limit";
@@ -28,6 +32,7 @@ import { checkAndAwardSessionBadges } from "../services/badges";
 import { WARMUP_MIN_SECONDS } from "@brandblitz/stellar";
 import { tokenRevocationKey, tokenTtlSeconds } from "../middleware/authenticate";
 import { revalidateLeaderboard } from "../lib/revalidate";
+import { query } from "../db/index";
 
 const router = Router();
 
@@ -117,15 +122,18 @@ router.get("/:challengeId", authenticate, async (req, res) => {
 
 /**
  * DELETE /sessions/:challengeId
- * Forfeit or clear an interrupted session so the player can start fresh.
+ * Explicitly quit an active or warmup session, recording abandon_reason = 'explicit'.
+ * The row is soft-abandoned (not deleted) so the reason is preserved for analytics
+ * and fraud detection. A subsequent warmup-start call will detect the abandoned
+ * session and create a fresh one via enforceOneSessionPerChallenge.
  */
 router.delete("/:challengeId", authenticate, async (req, res) => {
   const challengeId = String(req.params.challengeId);
   const challenge = await getChallengeById(challengeId);
   if (!challenge) throw createError("Challenge not found", 404);
 
-  const deleted = await deleteOpenSession(req.user!.sub, challenge.id);
-  if (!deleted) throw createError("No open session to forfeit", 404);
+  const abandoned = await abandonSession(req.user!.sub, challenge.id, "explicit");
+  if (!abandoned) throw createError("No open session to forfeit", 404);
 
   res.status(204).send();
 });
@@ -139,8 +147,8 @@ router.post(
   "/:challengeId/warmup-start",
   authenticate,
   requireActiveUser,
-  validateDeviceFingerprint,
   enforceOneSessionPerChallenge,
+  validateDeviceFingerprint,
   async (req, res) => {
     const challengeId = String(req.params.challengeId);
     const challenge = await getChallengeById(challengeId);
@@ -164,9 +172,9 @@ router.post(
 /**
  * POST /sessions/:challengeId/warmup-complete
  * Completes warm-up and issues a short-lived challenge token.
- * Server enforces that minimum exposure time has passed.
+ * Server enforces that minimum exposure time has passed using server-side timestamp.
  */
-router.post("/:challengeId/warmup-complete", authenticate, async (req, res) => {
+router.post("/:challengeId/warmup-complete", authenticate, detectClockSkew, async (req, res) => {
   const challengeId = String(req.params.challengeId);
   const challenge = await getChallengeById(challengeId);
   if (!challenge) throw createError("Challenge not found", 404);
@@ -174,7 +182,20 @@ router.post("/:challengeId/warmup-complete", authenticate, async (req, res) => {
   const session = await getSession(req.user!.sub, challenge.id);
   if (!session) throw createError("Session not found", 404);
   if (session.user_id !== req.user!.sub) throw createError("Forbidden", 403);
-  await completeWarmupWithLock({ userId: req.user!.sub, challengeId: challenge.id });
+
+  // Enforce server-side warmup minimum using server timestamp only
+  const unlockAt = await redis.get(`warmup:unlock:${session.id}`);
+  if (unlockAt) {
+    const serverNow = Date.now();
+    const remainingMs = parseInt(unlockAt) - serverNow;
+    if (remainingMs > 0) {
+      const error = createError("Warm-up minimum not yet elapsed", 400, "WARMUP_TOO_FAST");
+      (error as any).remainingMs = remainingMs;
+      throw error;
+    }
+  }
+
+  await markWarmupCompleted(session.id);
 
   // Issue a short-lived challenge token (10 min TTL)
   const challengeToken = `ct:${session.id}:${Date.now()}`;
@@ -192,6 +213,7 @@ router.post(
   authenticate,
   requireActiveUser,
   challengeStartLimiter,
+  requireSessionStartAllowed,
   async (req, res) => {
     const { challengeToken } = z.object({ challengeToken: z.string() }).parse(req.body);
     const challengeId = String(req.params.challengeId);
@@ -206,6 +228,7 @@ router.post(
     if (!session || session.id !== storedSessionId) throw createError("Session mismatch", 403);
 
     await markChallengeStarted(session.id);
+    await query("UPDATE users SET last_active_at = NOW() WHERE id = $1", [req.user!.sub]);
     await redis.del(`challenge-token:${challengeToken}`);
 
     // Store session start time for timing validation
@@ -300,11 +323,22 @@ router.post(
             total_score: completed.total_score,
             is_practice: completed.is_practice,
           });
+          
+          // Invalidate Redis leaderboard cache
+          const keys = await redis.keys("leaderboard:*");
+          if (keys.length > 0) {
+            await redis.del(...keys);
+          }
+          await revalidateLeaderboard().catch(() => {});
         }
         const token = bearerToken(req);
         if (token) {
           await revokeSessionToken(session.id, token, req.user!.exp);
         }
+      }
+      const token = bearerToken(req);
+      if (token) {
+        await revokeSessionToken(session.id, token, req.user!.exp);
       }
     }
 

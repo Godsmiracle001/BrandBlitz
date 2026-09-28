@@ -12,7 +12,7 @@ One or more of:
 ## Impact
 
 | Component | Effect |
-|---|---|
+| --- | --- |
 | Challenge payouts | **Blocked for all new challenges** until balance is restored |
 | In-flight challenges | Games in progress continue; only the payout step fails |
 | Brand deposits | **Unaffected** — deposited to a separate custody account |

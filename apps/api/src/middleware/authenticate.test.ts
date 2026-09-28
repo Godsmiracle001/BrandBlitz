@@ -203,3 +203,135 @@ describe("authenticateOptional middleware", () => {
     expect(next).toHaveBeenCalled();
   });
 });
+
+describe("authenticate middleware - additional edge cases", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.redisGet.mockResolvedValue(null);
+  });
+
+  it("rejects an expired JWT (past exp) with 401", async () => {
+    const token = signToken(
+      { sub: "user1", email: "user@example.com" },
+      { expiresIn: "-1h" } // Already expired
+    );
+    const req = mockReq(token);
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+    expect(req.user).toBeUndefined();
+  });
+
+  it("rejects JWT signed with wrong secret with 401", async () => {
+    const token = jwt.sign(
+      { sub: "user1", email: "user@example.com", iss: "brandblitz-api", aud: "brandblitz-client" },
+      "wrong_secret_entirely",
+      { expiresIn: "1h" }
+    );
+    const req = mockReq(token);
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+    expect(req.user).toBeUndefined();
+  });
+
+  it("rejects structurally malformed token (not three Base64 segments) with 401", async () => {
+    const malformedToken = "not.two.segments";
+    const req = mockReq(malformedToken);
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("rejects completely malformed token string with 401", async () => {
+    const req = mockReq("completely-invalid-token-string");
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty Bearer value with 401", async () => {
+    const req = {
+      headers: { authorization: "Bearer " },
+      user: undefined as any,
+    };
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it("does not populate req.user when expired JWT error fires", async () => {
+    const token = signToken(
+      { sub: "user1", email: "user@example.com" },
+      { expiresIn: "-1h" } // Already expired
+    );
+    const req = mockReq(token);
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(req.user).toBeUndefined();
+  });
+
+  it("does not populate req.user when wrong secret error fires", async () => {
+    const token = jwt.sign(
+      { sub: "user1", email: "user@example.com", iss: "brandblitz-api", aud: "brandblitz-client" },
+      "wrong_secret",
+      { expiresIn: "1h" }
+    );
+    const req = mockReq(token);
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(req.user).toBeUndefined();
+  });
+
+  it("does not populate req.user when malformed token error fires", async () => {
+    const req = mockReq("definitely-not-a-valid-jwt");
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(req.user).toBeUndefined();
+  });
+
+  it("sets req.user.id from sub claim for valid token", async () => {
+    const token = signToken(
+      { sub: "user-id-123", email: "user@example.com" },
+      { expiresIn: "1h" }
+    );
+    const req = mockReq(token);
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(req.user).toBeDefined();
+    expect(req.user.sub).toBe("user-id-123");
+    expect(next).toHaveBeenCalled();
+  });
+
+  it("returns proper JSON error response for all rejection cases", async () => {
+    const req = mockReq("invalid-token");
+    const res = mockRes();
+
+    await authenticate(req as any, res, next);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(String) }));
+  });
+});

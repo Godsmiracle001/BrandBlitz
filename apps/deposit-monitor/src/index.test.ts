@@ -1,15 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { poll, redis, LAST_LEDGER_KEY } from "./index";
 import * as stellar from "@brandblitz/stellar";
-import fetch from "node-fetch";
 
 vi.mock("@brandblitz/stellar", () => ({
   fetchDepositEvents: vi.fn(),
 }));
 
-vi.mock("node-fetch", () => ({
-  default: vi.fn(),
-}));
+const fetch = vi.fn();
+vi.stubGlobal("fetch", fetch);
 
 describe("Deposit Monitor", () => {
   beforeEach(() => {

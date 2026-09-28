@@ -1,0 +1,36 @@
+name: "Documentation"
+description: Incorrect, outdated, or missing docs.
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us keep the documentation accurate and complete.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What documentation is incorrect, outdated, or missing?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What must be true for this to be considered "done"?
+      placeholder: |
+        - [ ] Doc updated with correct information
+        - [ ] Links verified
+    validations:
+      required: true
+  - type: textarea
+    id: relevant-files
+    attributes:
+      label: Relevant Files
+      description: Which doc files are involved?
+      placeholder: "e.g., docs/infrastructure/nginx.md"
+  - type: textarea
+    id: resources
+    attributes:
+      label: Resources
+      description: Links to related issues or references.

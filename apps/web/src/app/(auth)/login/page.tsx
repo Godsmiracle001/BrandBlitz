@@ -14,9 +14,15 @@ export default function LoginPage() {
         <Suspense fallback={<Skeleton className="h-11 w-full" />}>
           <LoginButton />
         </Suspense>
-        <p className="text-xs text-center text-[var(--muted-foreground)]">
-          By signing in you agree to our Terms of Service and Privacy Policy.
-        </p>
+        <div className="space-y-2 text-center text-xs text-[var(--muted-foreground)]">
+          <p>By signing in you agree to our Terms of Service and Privacy Policy.</p>
+          <a
+            href="https://github.com/privexlabs/BrandBlitz/blob/main/docs/guides/signing-in.md"
+            className="font-medium text-primary underline-offset-4 hover:underline"
+          >
+            Learn about sign-in options
+          </a>
+        </div>
       </CardContent>
     </Card>
   );

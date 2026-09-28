@@ -84,7 +84,10 @@ services:
 
   nginx:
     restart: unless-stopped
-    image: nginx:1.25-alpine
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: brandblitz-nginx:${APP_VERSION:-prod}
     environment:
       DOMAIN: ${DOMAIN}
     volumes:

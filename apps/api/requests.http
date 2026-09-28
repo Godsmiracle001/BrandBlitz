@@ -1,0 +1,59 @@
+# BrandBlitz API — manual request collection
+#
+# Works with the VS Code "REST Client" extension (humao.rest-client) and
+# JetBrains HTTP Client. Routes mirror docs/openapi.yml.
+#
+# Start the API first: pnpm --filter @brandblitz/api dev (listens on PORT, default 3001).
+#
+# Authenticated requests need:  Authorization: Bearer <accessToken>
+# Get an accessToken + refreshToken from "Google callback" below, then paste
+# them into @accessToken / @refreshToken.
+
+@baseUrl = http://localhost:3001
+@accessToken = paste-access-token-here
+@refreshToken = paste-refresh-token-here
+@challengeId = paste-challenge-id-here
+
+### ─── Auth ───────────────────────────────────────────────────────────────
+
+### Google callback: exchange a Google ID token for a BrandBlitz session
+POST {{baseUrl}}/auth/google/callback
+Content-Type: application/json
+
+{
+  "idToken": "paste-google-id-token-here"
+}
+
+### Current user (authenticated)
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{accessToken}}
+
+### Rotate access + refresh tokens
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### Logout (invalidate the refresh token)
+POST {{baseUrl}}/auth/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### ─── Challenges ─────────────────────────────────────────────────────────
+
+### List active challenges (paginated; pass nextCursor back as ?cursor=)
+GET {{baseUrl}}/challenges?limit=10
+
+### Get one challenge and its questions (authenticated)
+GET {{baseUrl}}/challenges/{{challengeId}}
+Authorization: Bearer {{accessToken}}
+
+### ─── Leaderboard ────────────────────────────────────────────────────────
+
+### Top-N leaderboard for one challenge
+GET {{baseUrl}}/leaderboard/{{challengeId}}?limit=10

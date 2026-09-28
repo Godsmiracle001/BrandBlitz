@@ -59,6 +59,7 @@ secret is deployed, preventing forced sign-outs.
    - Redeploy again (or update the Docker secret; a rolling restart is fine).
 
 5. **Verify**:
+
    ```bash
    curl -f https://brandblitz.io/api/health
    # Check auth flows in staging first.

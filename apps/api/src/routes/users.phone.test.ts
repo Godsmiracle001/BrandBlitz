@@ -2,27 +2,44 @@ import type { Server } from "node:http";
 import express from "express";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const sendVerificationCodeMock = vi.fn();
-const checkVerificationCodeMock = vi.fn();
-const findUserByIdMock = vi.fn();
-const findUserByPhoneHashMock = vi.fn();
-const markPhoneVerifiedMock = vi.fn();
-const updateUserWalletMock = vi.fn();
-
-const redisState = new Map<string, string>();
-const redisMock = {
-  incr: vi.fn(async (key: string) => {
-    const next = Number(redisState.get(key) ?? "0") + 1;
-    redisState.set(key, next.toString());
-    return next;
-  }),
-  expire: vi.fn(async () => 1),
-  get: vi.fn(async (key: string) => redisState.get(key) ?? null),
-  set: vi.fn(async (key: string, value: string) => {
-    redisState.set(key, value);
-    return "OK";
-  }),
-};
+const {
+  sendVerificationCodeMock,
+  checkVerificationCodeMock,
+  findUserByIdMock,
+  findUserByPhoneHashMock,
+  markPhoneVerifiedMock,
+  updateUserWalletMock,
+  redisState,
+  redisMock,
+} = vi.hoisted(() => {
+  const redisState = new Map<string, string>();
+  return {
+    sendVerificationCodeMock: vi.fn(),
+    checkVerificationCodeMock: vi.fn(),
+    findUserByIdMock: vi.fn(),
+    findUserByPhoneHashMock: vi.fn(),
+    markPhoneVerifiedMock: vi.fn(),
+    updateUserWalletMock: vi.fn(),
+    redisState,
+    redisMock: {
+      incr: vi.fn(async (key: string) => {
+        const next = Number(redisState.get(key) ?? "0") + 1;
+        redisState.set(key, next.toString());
+        return next;
+      }),
+      expire: vi.fn(async () => 1),
+      get: vi.fn(async (key: string) => redisState.get(key) ?? null),
+      set: vi.fn(async (key: string, value: string) => {
+        redisState.set(key, value);
+        return "OK";
+      }),
+      del: vi.fn(async (key: string) => {
+        const existed = redisState.delete(key);
+        return existed ? 1 : 0;
+      }),
+    },
+  };
+});
 
 vi.mock("twilio", () => ({
   default: vi.fn(() => ({

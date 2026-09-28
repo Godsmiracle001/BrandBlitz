@@ -81,7 +81,7 @@ describe("useKeyboardAnswers", () => {
     document.body.appendChild(input);
     input.focus();
 
-    window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
     expect(onAnswer).not.toHaveBeenCalled();
     document.body.removeChild(input);
   });

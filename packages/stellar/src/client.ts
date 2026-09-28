@@ -145,6 +145,7 @@ export function getNetworkConfig(name: NetworkName = "testnet") {
   return config;
 }
 
+// Backward-compat alias.
 export const getNetwork = getNetworkConfig;
 const maxSockets = Number(process.env.STELLAR_MAX_SOCKETS ?? "32");
 
@@ -162,24 +163,19 @@ const sharedHttpAgent = new http.Agent({
   maxFreeSockets: Math.ceil(maxSockets / 4),
 });
 
-// Wire the agent into Horizon's shared axios client so every Horizon.Server
-// instance created in this process reuses the connection pool.
-Horizon.AxiosClient.defaults.httpsAgent = sharedAgent;
-Horizon.AxiosClient.defaults.httpAgent = sharedHttpAgent;
+// Wire the agent into Horizon's shared axios client when the SDK exposes it so
+// every Horizon.Server instance created in this process reuses the connection
+// pool. Stellar SDK versions differ on whether this singleton is public.
+if (Horizon.AxiosClient?.defaults) {
+  Horizon.AxiosClient.defaults.httpsAgent = sharedAgent;
+  Horizon.AxiosClient.defaults.httpAgent = sharedHttpAgent;
+}
 
 /** Call on process shutdown to drain in-flight requests and close sockets. */
 export function drainSharedAgent(): void {
   sharedAgent.destroy();
   sharedHttpAgent.destroy();
 }
-
-export function getNetwork(name: NetworkName = "testnet") {
-  if (!(name in STELLAR_NETWORKS)) throw new Error(`Invalid network name: ${name}`);
-  return STELLAR_NETWORKS[name];
-}
-
-// Backward-compat alias
-export { getNetwork as getNetworkConfig };
 
 export function getHorizonServer(network: NetworkName = "testnet"): Horizon.Server {
   const { horizonUrl } = getNetwork(network);

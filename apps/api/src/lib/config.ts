@@ -54,15 +54,27 @@ function loadConfig(): Readonly<Config> {
     return Object.freeze(parsed);
   } catch (error) {
     if (error instanceof ZodError) {
+      const missing = error.issues
+        .filter((issue) => {
+          const typed = issue as { code: string; received?: unknown };
+          return typed.code === "invalid_type" && typed.received === "undefined";
+        })
+        .map((issue) => issue.path.join("."));
+
       const details = error.issues
         .map((issue) => {
           const path = issue.path.join(".");
           return `  • ${path}: ${issue.message}`;
         })
         .join("\n");
+
+      const missingLine =
+        missing.length > 0 ? `\nMissing required env vars: ${missing.join(", ")}` : "";
+
       console.error(
-        `❌ Invalid or missing environment variables:\n${details}\n` +
-          `Check your .env file against .env.example for the expected format.`,
+        `❌ Invalid or missing environment variables:\n${details}${missingLine}\n` +
+          `Check your .env file against .env.example for the expected format.\n` +
+          `Hint: run \`pnpm setup:secrets\` (or \`npx tsx scripts/setup-dev-secrets.ts\`) to generate a local .env, or copy the example: \`cp .env.example .env\` and fill in the missing values. See scripts/setup-dev-secrets.ts.`,
       );
       process.exit(1);
     }

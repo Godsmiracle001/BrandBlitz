@@ -22,6 +22,8 @@ export function WarmupPhase({ challenge, apiToken, onComplete, deviceId }: Warmu
   const handleTimerExpire = useCallback(() => setUnlocked(true), []);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [showRetry, setShowRetry] = useState(false);
+  const [deadlineAt, setDeadlineAt] = useState<number | undefined>(undefined);
+  const [isPaused, setIsPaused] = useState(false);
 
   useEffect(() => {
     const api = createApiClient(apiToken);
@@ -29,7 +31,11 @@ export function WarmupPhase({ challenge, apiToken, onComplete, deviceId }: Warmu
       `/sessions/${challenge.id}/warmup-start`,
       {},
       deviceId ? { headers: { "X-Device-Id": deviceId } } : undefined,
-    ).catch(() => {
+    ).then((res) => {
+      if (res.data?.unlockAt) {
+        setDeadlineAt(res.data.unlockAt);
+      }
+    }).catch(() => {
       setStatusMessage("Failed to initialize warmup. Please refresh.");
     });
   }, [apiToken, challenge.id, deviceId]);
@@ -105,24 +111,33 @@ export function WarmupPhase({ challenge, apiToken, onComplete, deviceId }: Warmu
         <div className="py-4">
           <CountdownTimer
             durationSeconds={WARMUP_MIN_SECONDS}
+            deadlineAt={deadlineAt}
             onExpire={handleTimerExpire}
+            onPausedChange={setIsPaused}
           />
-          {!unlocked && (
+          {unlocked ? (
+            <p
+              role="status"
+              className="text-center text-sm font-semibold text-green-700 mt-2 motion-safe:animate-pulse motion-reduce:animate-none"
+            >
+              <span aria-hidden="true">✓ </span>Ready!
+            </p>
+          ) : (
             <p className="text-center text-xs text-slate-500 mt-2">
               Study time remaining
             </p>
           )}
         </div>
 
-        {/* Start button — unlocked after minimum warmup */}
+        {/* Start button — unlocked after minimum warmup and not paused */}
         <Button
           onClick={handleStartChallenge}
-          disabled={!unlocked || submitting}
+          disabled={!unlocked || submitting || isPaused}
           size="lg"
           className="w-full text-lg"
           style={{ backgroundColor: challenge.primary_color ?? undefined }}
         >
-          {submitting ? "Starting..." : unlocked ? "Start Challenge →" : "Preparing..."}
+          {submitting ? "Starting..." : isPaused ? "Paused — Wait to resume" : unlocked ? "Start Challenge →" : "Preparing..."}
         </Button>
 
         {statusMessage ? (

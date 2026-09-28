@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:17-alpine
+    profiles: ["infra"]
     environment:
       POSTGRES_DB: brandblitz
       POSTGRES_USER: brandblitz
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    profiles: ["infra"]
     # `volatile-lru` only evicts keys that carry a TTL. BullMQ dead-letter
     # queue jobs are stored without a TTL (removeOnComplete: false), so DLQ
     # keys are never evicted and are retained well beyond the 7-day
@@ -32,6 +34,7 @@ services:
 
   minio:
     image: minio/minio:latest
+    profiles: ["infra"]
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-brandblitz}
@@ -46,6 +49,7 @@ services:
 
   minio-setup:
     image: minio/mc:latest
+    profiles: ["infra"]
     depends_on:
       minio:
         condition: service_healthy
@@ -67,6 +71,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile
+    stop_grace_period: 35s
     deploy:
       resources:
         limits:
@@ -117,6 +122,7 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     command: ["node", "dist/worker.js"]
+    stop_grace_period: 35s
     deploy:
       resources:
         limits:
@@ -182,6 +188,7 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost/api}
+      NEXT_PUBLIC_CDN_HOST: ${NEXT_PUBLIC_CDN_HOST:-}
       NEXT_PUBLIC_STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
       NEXT_PUBLIC_S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9000}
     depends_on:
@@ -189,7 +196,10 @@ services:
         condition: service_started
 
   nginx:
-    image: nginx:stable-alpine
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: brandblitz-nginx:${APP_VERSION:-dev}
     ports:
       - "80:80"
     volumes:

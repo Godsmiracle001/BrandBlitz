@@ -209,18 +209,28 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      <div className="mb-6 flex items-center gap-2">
-        <span className="text-sm text-[var(--muted-foreground)]">Date range:</span>
-        {(["7", "30", "90"] as DateRange[]).map((range) => (
-          <Button
-            key={range}
-            variant={dateRange === range ? "default" : "outline"}
-            size="sm"
-            onClick={() => setDateRange(range)}
-          >
-            {range} days
-          </Button>
-        ))}
+      <div className="mb-6 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-[var(--muted-foreground)]">Date range:</span>
+          {(["7", "30", "90"] as DateRange[]).map((range) => (
+            <Button
+              key={range}
+              variant={dateRange === range ? "default" : "outline"}
+              size="sm"
+              onClick={() => setDateRange(range)}
+            >
+              {range} days
+            </Button>
+          ))}
+        </div>
+        <a
+          href="/docs/guides/brand-analytics-metrics"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-[var(--muted-foreground)] underline hover:text-[var(--foreground)]"
+        >
+          What do these metrics mean?
+        </a>
       </div>
 
       {analyticsLoadError ? (

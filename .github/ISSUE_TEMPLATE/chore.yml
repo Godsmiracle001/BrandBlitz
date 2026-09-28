@@ -1,0 +1,37 @@
+name: "Chore / Maintenance"
+description: Dependency upgrades, tooling changes, CI fixes.
+labels: ["chore"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Maintenance tasks that keep the project healthy.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What maintenance work is needed?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What must be true for this to be considered "done"?
+      placeholder: |
+        - [ ] Dependency upgraded
+        - [ ] Tests pass
+        - [ ] No breaking changes
+    validations:
+      required: true
+  - type: textarea
+    id: relevant-files
+    attributes:
+      label: Relevant Files
+      description: Which files are involved?
+      placeholder: "e.g., package.json, .github/workflows/ci.yml"
+  - type: textarea
+    id: resources
+    attributes:
+      label: Resources
+      description: Links to changelogs, migration guides, or related issues.

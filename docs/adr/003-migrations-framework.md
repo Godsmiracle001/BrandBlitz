@@ -67,9 +67,15 @@ Considered alternatives:
   burden.
 - `migrate.ts` is now load-bearing — bugs in the runner can corrupt
   prod. Tested via `pnpm migrate:dryrun` in CI on every PR that
-  touches `migrations/`.
-- Down migrations remain rare; when they exist they're explicit and
-  reviewed alongside their up counterpart.
+  touches `apps/api/migrations/` (see `ci.yml` `test-api` job).
+- Down migrations remain explicit and reviewed alongside their up
+  counterpart. They are now additionally exercised in CI: the
+  `exercise-down-migrations` job in `db-dual-path.yml` applies all
+  forward migrations, rolls back each `.down.sql` file in reverse
+  version order, re-applies the up migration, and asserts the schema
+  matches the pre-rollback baseline (round-trip check). This
+  validates every rollback code path before it is ever needed during
+  a live incident.
 - New contributors learn one tool (`pnpm migrate`) instead of two
   (an ORM model API + an ORM CLI).
 

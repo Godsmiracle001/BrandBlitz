@@ -30,23 +30,25 @@ Created a partial unique index that:
 
 ### Implementation
 
-#### Migration File: `migrations/011_username_unique_partial.sql`
+#### Migration File: `apps/api/migrations/0024-username-unique-partial.sql`
+*(Superseded previous un-run migration `migrations/011_username_unique_partial.sql` in root)*
 
 ```sql
 -- Drop the existing UNIQUE constraint on username
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_username_key;
 
 -- Create a partial unique index (case-insensitive, only when username IS NOT NULL)
-CREATE UNIQUE INDEX users_username_unique 
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique 
   ON users (LOWER(username)) 
   WHERE username IS NOT NULL;
 ```
 
-#### Test Coverage: `users.username.test.ts`
+#### Test Coverage: `apps/api/src/db/queries/users.username.test.ts`
+*(Moved from root directory so it is executed by `vitest` under `@brandblitz/api`)*
 
 Comprehensive Vitest tests covering:
 - ✅ Multiple NULL usernames allowed
-- ✅ Duplicate usernames rejected (case-insensitive)
+- ✅ Duplicate usernames rejected (case-insensitive, e.g. "Alice" vs "alice")
 - ✅ Duplicate usernames rejected (same case)
 - ✅ Setting username after NULL works
 - ✅ Updating username to NULL works
@@ -60,8 +62,10 @@ Comprehensive Vitest tests covering:
 
 ### Files Created/Modified
 
-- **Created**: `migrations/011_username_unique_partial.sql`
-- **Created**: `users.username.test.ts`
+- **Created**: `apps/api/migrations/0024-username-unique-partial.sql`
+- **Created**: `apps/api/migrations/0024-username-unique-partial.down.sql`
+- **Created**: `apps/api/src/db/queries/users.username.test.ts` (moved from root `users.username.test.ts`)
+- **Deprecated**: `migrations/011_username_unique_partial.sql` (added header notice pointing to real migration)
 
 ---
 

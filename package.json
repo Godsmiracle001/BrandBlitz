@@ -6,19 +6,24 @@
   "scripts": {
     "dev": "turbo run dev --parallel",
     "build": "turbo run build",
-    "test": "turbo run test",
-    "e2e": "playwright test -c e2e/playwright.config.ts",
     "test": "vitest run --config vitest.config.ts",
+    "e2e": "playwright test -c e2e/playwright.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
+    "type-check:watch": "turbo run type-check:watch",
+    "setup:secrets": "tsx scripts/setup-dev-secrets.ts",
+    "fund:testnet-wallet": "tsx scripts/fund-testnet-wallet.ts",
     "validate-env-example": "tsx scripts/validate-env-example.ts",
+    "db:reset": "pnpm --filter @brandblitz/api db:reset",
     "clean": "turbo run clean && rm -rf node_modules",
+    "check:bundle": "node scripts/check-bundle-budget.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\" --ignore-path .gitignore",
-    "docs:db": "GOBIN=$HOME/go/bin go install github.com/k1LoW/tbls@latest && PATH=$HOME/go/bin:$PATH mkdir -p /tmp/brandblitz-tbls-docs && rm -rf /tmp/brandblitz-tbls-docs && PATH=$HOME/go/bin:$PATH tbls doc \"${DATABASE_URL:-postgresql://brandblitz:brandblitz_dev@127.0.0.1:5432/brandblitz?sslmode=disable}\" /tmp/brandblitz-tbls-docs --er-format svg --force && mkdir -p docs/db && cp /tmp/brandblitz-tbls-docs/schema.svg docs/db/er.svg",
+    "docs:db": "command -v go >/dev/null 2>&1 || { echo 'Error: pnpm docs:db requires the Go toolchain (used to install tbls via \"go install\"). Install Go from https://go.dev/doc/install, ensure it is on PATH, then re-run pnpm docs:db.' >&2; exit 1; } && GOBIN=$HOME/go/bin go install github.com/k1LoW/tbls@latest && PATH=$HOME/go/bin:$PATH mkdir -p /tmp/brandblitz-tbls-docs && rm -rf /tmp/brandblitz-tbls-docs && PATH=$HOME/go/bin:$PATH tbls doc \"${DATABASE_URL:-postgresql://brandblitz:brandblitz_dev@127.0.0.1:5432/brandblitz?sslmode=disable}\" /tmp/brandblitz-tbls-docs --er-format svg --force && mkdir -p docs/db && cp /tmp/brandblitz-tbls-docs/schema.svg docs/db/er.svg",
     "prepare": "husky",
     "gitleaks": "node scripts/gitleaks.mjs",
-    "gitleaks:pre-commit": "git diff --cached --no-color | node scripts/gitleaks.mjs detect --pipe --redact --config .gitleaks.toml"
+    "gitleaks:pre-commit": "git diff --cached --no-color | node scripts/gitleaks.mjs detect --pipe --redact --config .gitleaks.toml",
+    "minio:certs": "sudo bash scripts/generate-minio-certs.sh"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.10.2",
@@ -28,6 +33,7 @@
     "husky": "9.1.7",
     "prettier": "3.8.1",
     "prettier-plugin-tailwindcss": "0.6.12",
+    "tsx": "4.21.0",
     "turbo": "2.8.21",
     "typescript": "6.0.2",
     "vitest": "4.1.2"

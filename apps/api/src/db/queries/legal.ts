@@ -62,7 +62,19 @@ export async function recordUserLegalAcceptance(
      RETURNING *`,
     [userId, type, version, ip]
   );
-  return result.rows[0];
+
+  const acceptance = result.rows[0];
+  // Only log a fresh acceptance — a conflicting (already-accepted) replay
+  // returns no row here and should not create a duplicate audit entry.
+  if (acceptance) {
+    await query(
+      `INSERT INTO audit_log (actor_id, action, entity, entity_key, after)
+       VALUES ($1, 'accept', 'user_legal_acceptances', $2, $3)`,
+      [userId, `${type}:${version}`, acceptance]
+    );
+  }
+
+  return acceptance;
 }
 
 export async function hasAcceptedLatestVersion(userId: string, type: "tos" | "privacy"): Promise<boolean> {

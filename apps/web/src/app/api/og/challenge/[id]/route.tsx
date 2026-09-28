@@ -71,6 +71,7 @@ export async function GET(
           }}
         >
           {logoUrl && (
+            // next/image can't render inside Satori's ImageResponse
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={logoUrl}

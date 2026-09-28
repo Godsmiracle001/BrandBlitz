@@ -1,0 +1,36 @@
+name: "Feature Request"
+description: New functionality or a change to existing behaviour.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the feature you'd like to see added or changed.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What functionality do you want? Why is it needed?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What must be true for this feature to be considered "done"?
+      placeholder: |
+        - [ ] User can do X
+        - [ ] Y is displayed when Z happens
+    validations:
+      required: true
+  - type: textarea
+    id: relevant-files
+    attributes:
+      label: Relevant Files
+      description: Which files or directories would be involved?
+      placeholder: "e.g., apps/api/src/routes/challenges.ts"
+  - type: textarea
+    id: resources
+    attributes:
+      label: Resources
+      description: Links to documentation, Figma, related issues, or other resources.

@@ -98,6 +98,82 @@ describe("streaks service", () => {
     await expect(repairStreak("user-1", new Date("2026-05-30T10:00:00Z"))).resolves.toBeNull();
   });
 
+  it("does not increment when the user already played today (UTC)", async () => {
+    mocks.getUserStreak.mockResolvedValue({
+      id: "user-1",
+      streak: 4,
+      last_play_day: "2026-05-30",
+      streak_repairs_this_month: 0,
+      streak_repair_available: false,
+    });
+
+    const result = await updateStreak("user-1", new Date("2026-05-30T23:59:00Z"));
+
+    expect(result.streak).toBe(4);
+    expect(mocks.setUserStreak).not.toHaveBeenCalled();
+    expect(mocks.metricsInc).not.toHaveBeenCalled();
+  });
+
+  it("treats a play just after UTC midnight as a new day, not a same-day replay", async () => {
+    mocks.getUserStreak.mockResolvedValue({
+      id: "user-1",
+      streak: 4,
+      last_play_day: "2026-05-29",
+      streak_repairs_this_month: 0,
+      streak_repair_available: false,
+    });
+    mocks.setUserStreak.mockResolvedValue({
+      id: "user-1",
+      streak: 5,
+      last_play_day: "2026-05-30",
+      streak_repairs_this_month: 0,
+      streak_repair_available: true,
+    });
+
+    const result = await updateStreak("user-1", new Date("2026-05-30T00:00:30Z"));
+
+    expect(result.streak).toBe(5);
+    expect(mocks.setUserStreak).toHaveBeenCalledWith({
+      userId: "user-1",
+      streak: 5,
+      lastPlayDay: "2026-05-30",
+      repairAvailable: true,
+    });
+  });
+
+  it("resets to 1 when the gap since last play exceeds a single day", async () => {
+    mocks.getUserStreak.mockResolvedValue({
+      id: "user-1",
+      streak: 10,
+      last_play_day: "2026-05-20",
+      streak_repairs_this_month: 0,
+      streak_repair_available: true,
+    });
+    mocks.setUserStreak.mockResolvedValue({
+      id: "user-1",
+      streak: 1,
+      last_play_day: "2026-05-30",
+      streak_repairs_this_month: 0,
+      streak_repair_available: false,
+    });
+
+    const result = await updateStreak("user-1", new Date("2026-05-30T10:00:00Z"));
+
+    expect(result.streak).toBe(1);
+    expect(mocks.setUserStreak).toHaveBeenCalledWith(
+      expect.objectContaining({ streak: 1, repairAvailable: false })
+    );
+  });
+
+  it("does not repair a streak once the monthly repair allowance is already used", async () => {
+    mocks.repairUserStreak.mockResolvedValue(null);
+
+    const result = await repairStreak("user-1", new Date("2026-05-30T10:00:00Z"));
+
+    expect(result).toBeNull();
+    expect(mocks.repairUserStreak).toHaveBeenCalledWith("user-1", "2026-05-30");
+  });
+
   it("formats current streak state", async () => {
     mocks.getUserStreak.mockResolvedValue({
       id: "user-1",

@@ -1,2 +1,29 @@
-pnpm -s gitleaks:pre-commit
+# NOTE: .husky/_/ (h, husky.sh, and friends) is Husky v9+'s auto-generated
+# helper directory. It is regenerated locally by `pnpm prepare` (husky) and
+# is not committed to this repo — Husky writes its own .husky/_/.gitignore
+# (containing `*`) the first time it runs, so the directory self-excludes
+# regardless of the root .gitignore. Never hand-edit anything under
+# .husky/_/; if it looks wrong or out of date, delete it and re-run
+# `pnpm prepare` rather than patching it directly.
 
+# 1. Prettier — check only the staged files the `format` script covers
+#    (*.ts, *.tsx, *.json, *.md), so the hook stays fast regardless of repo
+#    size. Deleted files are skipped. Prettier reads the working-tree copy of
+#    each staged file, same as lint-staged without its stash step.
+staged_prettier_files() {
+  git diff --cached --name-only --diff-filter=ACMR "$@" -- '*.ts' '*.tsx' '*.json' '*.md'
+}
+if [ -n "$(staged_prettier_files)" ]; then
+  if ! staged_prettier_files -z \
+    | xargs -0 pnpm exec prettier --check --ignore-path .gitignore --no-error-on-unmatched-pattern; then
+    echo >&2
+    echo "pre-commit: Prettier found formatting issues in the staged files listed above." >&2
+    echo "  Fix them with:  pnpm format" >&2
+    echo "  (or just those files:  pnpm exec prettier --write <file>...)" >&2
+    echo "  then re-stage the files and commit again." >&2
+    exit 1
+  fi
+fi
+
+# 2. Gitleaks — scan the staged diff for secrets.
+pnpm -s gitleaks:pre-commit

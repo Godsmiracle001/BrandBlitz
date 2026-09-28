@@ -44,4 +44,3 @@ If the repo is public, assume the secret was copied already and keep it rotated 
 1. Add/adjust detection rules in `.gitleaks.toml` to prevent recurrence.
 2. Review where secrets are stored and ensure all secrets come from the secret manager / environment variables.
 3. Add a short incident note in internal tracking (what leaked, when rotated, impact).
-

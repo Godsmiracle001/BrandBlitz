@@ -11,6 +11,8 @@ import { logger } from "../lib/logger";
 import { config } from "../lib/config";
 import { getAccountUsdcBalance } from "@brandblitz/stellar";
 
+import { verifyWebhook } from "../middleware/verify-webhook";
+
 const router = Router();
 
 function usdcToStroops(value: string): bigint {
@@ -31,13 +33,7 @@ const DepositWebhookSchema = z
  * Internal webhook: called by the deposit monitor when a matching USDC
  * payment is detected on-chain. Activates the challenge.
  */
-router.post("/stellar/deposit", webhookLimiter, async (req, res) => {
-  const secret = req.headers["x-webhook-secret"];
-  if (secret !== config.WEBHOOK_SECRET) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
+router.post("/stellar/deposit", webhookLimiter, verifyWebhook, async (req, res) => {
   const body = DepositWebhookSchema.parse(req.body);
 
   const duplicateChallenge = await getChallengeByDepositTxHash(body.txHash);

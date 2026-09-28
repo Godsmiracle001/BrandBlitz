@@ -133,4 +133,65 @@ describe("queueReferralBonusForPayout", () => {
     expect(mocks.markReferralRewarded).toHaveBeenCalledWith("referral-1");
     expect(mocks.enqueueReferralBonus).toHaveBeenCalledWith("payout-1");
   });
+
+  it("does not insert a duplicate payout or enqueue a second job when the referral is already rewarded", async () => {
+    mocks.findReferralByReferredId.mockResolvedValue({
+      id: "referral-1",
+      referrer_id: "referrer-1",
+      referred_id: "referred-1",
+      rewarded: true,
+    });
+
+    await queueReferralBonusForPayout({
+      referredUserId: "referred-1",
+      challengeId: "challenge-1",
+      referralWinAmountStroops: 100_000_000n,
+    });
+
+    expect(mocks.createReferralPayout).not.toHaveBeenCalled();
+    expect(mocks.enqueueReferralBonus).not.toHaveBeenCalled();
+    expect(mocks.markReferralRewarded).not.toHaveBeenCalled();
+  });
+
+  it("does not write a bonus when the referred user has no referral on record (no qualifying action)", async () => {
+    mocks.findReferralByReferredId.mockResolvedValue(null);
+
+    await queueReferralBonusForPayout({
+      referredUserId: "referred-1",
+      challengeId: "challenge-1",
+      referralWinAmountStroops: 100_000_000n,
+    });
+
+    expect(mocks.createReferralPayout).not.toHaveBeenCalled();
+    expect(mocks.enqueueReferralBonus).not.toHaveBeenCalled();
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
+  it("second trigger for the same referrer/referred pair is a no-op once the first has already enqueued a payout", async () => {
+    mocks.query.mockResolvedValueOnce({ rows: [{ exists: false }] });
+
+    await queueReferralBonusForPayout({
+      referredUserId: "referred-1",
+      challengeId: "challenge-1",
+      referralWinAmountStroops: 100_000_000n,
+    });
+
+    expect(mocks.enqueueReferralBonus).toHaveBeenCalledTimes(1);
+
+    mocks.findReferralByReferredId.mockResolvedValue({
+      id: "referral-1",
+      referrer_id: "referrer-1",
+      referred_id: "referred-1",
+      rewarded: true,
+    });
+
+    await queueReferralBonusForPayout({
+      referredUserId: "referred-1",
+      challengeId: "challenge-1",
+      referralWinAmountStroops: 100_000_000n,
+    });
+
+    expect(mocks.createReferralPayout).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueueReferralBonus).toHaveBeenCalledTimes(1);
+  });
 });

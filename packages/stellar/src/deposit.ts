@@ -1,4 +1,5 @@
 import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
+import { randomBytes } from "node:crypto";
 import { getRpcServer, getUsdcAsset, getNetworkConfig, withRetry, type NetworkName, type RetryOptions } from "./client";
 import { DEPOSIT_POLL_INTERVAL_MS } from "./constants";
 
@@ -22,12 +23,19 @@ export type DepositMemoValidation =
   | { valid: true; memo: string }
   | { valid: false; reason: "missing" | "invalid_format" };
 
-const UUID_V4_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Generate an opaque Stellar text memo (maximum 28 UTF-8 bytes). */
+export function generateDepositMemo(): string {
+  return randomBytes(18).toString("base64url");
+}
 
 export function validateDepositMemo(memo: string | null): DepositMemoValidation {
   if (!memo?.trim()) return { valid: false, reason: "missing" };
-  if (!UUID_V4_PATTERN.test(memo)) return { valid: false, reason: "invalid_format" };
+  if (
+    Buffer.byteLength(memo, "utf8") > 28 ||
+    /[\u0000-\u001f\u007f]/.test(memo)
+  ) {
+    return { valid: false, reason: "invalid_format" };
+  }
   return { valid: true, memo };
 }
 

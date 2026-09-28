@@ -25,11 +25,13 @@ printf '%s' "$NEW_SECRET" | docker secret create s3_secret_key -
 ## Rotation procedure
 
 1. **Generate a new credential:**
+
    ```bash
    NEW_SECRET=$(openssl rand -base64 30)
    ```
 
 2. **Update MinIO via the mc CLI:**
+
    ```bash
    mc alias set prod https://s3.brandblitz.io $MINIO_ROOT_USER $OLD_SECRET
    mc admin user add prod brandblitz_svc "$NEW_SECRET"
@@ -37,6 +39,7 @@ printf '%s' "$NEW_SECRET" | docker secret create s3_secret_key -
    ```
 
 3. **Replace Docker secrets** (secrets are immutable — create new then update service):
+
    ```bash
    printf '%s' "$NEW_SECRET" | docker secret create s3_secret_key_v2 -
    docker service update \
@@ -52,12 +55,14 @@ printf '%s' "$NEW_SECRET" | docker secret create s3_secret_key -
    ```
 
 4. **Verify services are healthy:**
+
    ```bash
    docker service ls
    curl -f https://brandblitz.io/api/health
    ```
 
 5. **Revoke the old MinIO user** (if you created a service account in step 2):
+
    ```bash
    mc admin user disable prod old_service_account
    mc admin user rm prod old_service_account

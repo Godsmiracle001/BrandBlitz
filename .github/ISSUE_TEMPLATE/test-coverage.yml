@@ -1,0 +1,40 @@
+name: "Test Coverage"
+description: A module that lacks tests; specify the file and target coverage %.
+labels: ["testing"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help us improve test coverage. Identify the module and desired coverage target.
+  - type: textarea
+    id: description
+    attributes:
+      label: Module
+      description: Which file or module needs test coverage?
+      placeholder: "e.g., apps/api/src/services/payout.ts"
+    validations:
+      required: true
+  - type: input
+    id: target-coverage
+    attributes:
+      label: Target Coverage %
+      description: What coverage percentage should we aim for?
+      placeholder: "e.g., 80"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance Criteria
+      description: What scenarios must be covered?
+      placeholder: |
+        - [ ] Happy path tested
+        - [ ] Error handling tested
+        - [ ] Edge cases covered
+    validations:
+      required: true
+  - type: textarea
+    id: resources
+    attributes:
+      label: Resources
+      description: Links to related issues, specs, or documentation.

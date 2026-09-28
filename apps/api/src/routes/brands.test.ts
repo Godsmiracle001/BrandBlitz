@@ -32,6 +32,11 @@ vi.mock("../lib/logger", () => ({
   },
 }));
 
+vi.mock("../middleware/rate-limit", () => ({
+  apiLimiter: (_req: any, _res: any, next: any) => next(),
+  questionPreviewLimiter: (_req: any, _res: any, next: any) => next(),
+}));
+
 const JWT_SECRET = "dummy_jwt_secret_for_testing_purposes_only";
 
 vi.hoisted(() => {
@@ -271,6 +276,40 @@ describe("Brands Routes Integration", () => {
       );
       expect(qRes.rows.length).toBe(3);
       expect(qRes.rows[0].round).toBe(1);
+    });
+  });
+
+  describe("SVG sanitization", () => {
+    it("escapes XML entities in brand name before storage", async () => {
+      const payload = {
+        name: 'Ben & Jerry\'s <Brand>"',
+        tagline: "The <best> & most \"trusted\" brand",
+      };
+
+      const res = await request(app)
+        .post("/brands")
+        .set("Authorization", `Bearer ${testUser.token}`)
+        .send(payload);
+
+      expect(res.status).toBe(201);
+      expect(res.body.brand.name).toBe("Ben &amp; Jerry&apos;s &lt;Brand&gt;&quot;");
+      expect(res.body.brand.tagline).toBe("The &lt;best&gt; &amp; most &quot;trusted&quot; brand");
+    });
+
+    it("preserves plain text without XML entities", async () => {
+      const payload = {
+        name: "Acme Corp",
+        tagline: "Simply the best",
+      };
+
+      const res = await request(app)
+        .post("/brands")
+        .set("Authorization", `Bearer ${testUser.token}`)
+        .send(payload);
+
+      expect(res.status).toBe(201);
+      expect(res.body.brand.name).toBe("Acme Corp");
+      expect(res.body.brand.tagline).toBe("Simply the best");
     });
   });
 

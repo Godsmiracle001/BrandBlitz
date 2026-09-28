@@ -22,12 +22,17 @@ build
 npm-debug.log*
 pnpm-debug.log*
 
+# Backup files
+*.bak
+
 # OS
 .DS_Store
 Thumbs.db
 
 # IDE
-.vscode
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
 .idea
 *.swp
 *.swo
@@ -45,8 +50,12 @@ data/
 
 # Tool caches
 .cache/
+.corepack/
 
 # Type-checked output
 *.tsbuildinfo
 
 fix.md
+.env.*
+!.env.example
+!.env.sample

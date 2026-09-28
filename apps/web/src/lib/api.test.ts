@@ -46,12 +46,12 @@ describe("createApiClient", () => {
     expect(interceptors.handlers.length).toBe(1);
   });
 
-  it("does not attach a response interceptor for unauthenticated clients", () => {
+  it("attaches the generic response interceptor for unauthenticated clients", () => {
     const client = createApiClient();
     const interceptors = client.interceptors.response as unknown as {
       handlers: Array<{ fulfilled: unknown; rejected: unknown }>;
     };
-    expect(interceptors.handlers.length).toBe(0);
+    expect(interceptors.handlers.length).toBe(1);
   });
 
   it("shows session-expired toast and calls signOut on 401 (#357)", async () => {

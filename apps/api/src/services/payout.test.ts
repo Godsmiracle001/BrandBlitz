@@ -10,12 +10,17 @@ const mocks = vi.hoisted(() => ({
   getLeaderboard: vi.fn(),
   createPayout: vi.fn(),
   updatePayoutStatus: vi.fn(),
+  incrementUserEarnings: vi.fn(),
+  queueReferralBonusForPayout: vi.fn(),
   submitBatchPayout: vi.fn(),
   isRetriableStellarError: vi.fn(),
+  isInsufficientFeeError: vi.fn(),
   queueAdd: vi.fn(),
+  enqueueLeaderboardRefresh: vi.fn(),
   emitCounterMetric: vi.fn(),
   verifySessionHmac: vi.fn().mockReturnValue(true),
   metricsInc: vi.fn(),
+  getLicensePayoutTerms: vi.fn(),
   logger: {
     info: vi.fn(),
     warn: vi.fn(),
@@ -37,18 +42,38 @@ vi.mock("../db/queries/payouts", () => ({
   updatePayoutStatus: mocks.updatePayoutStatus,
 }));
 
+vi.mock("../db/queries/users", () => ({
+  incrementUserEarnings: mocks.incrementUserEarnings,
+}));
+
+vi.mock("../db/queries/challenge-licenses", () => ({
+  getLicensePayoutTerms: mocks.getLicensePayoutTerms,
+}));
+
+vi.mock("./referrals", () => ({
+  queueReferralBonusForPayout: mocks.queueReferralBonusForPayout,
+}));
+
 vi.mock("@brandblitz/stellar", () => ({
   submitBatchPayout: mocks.submitBatchPayout,
   isRetriableStellarError: mocks.isRetriableStellarError,
+  isInsufficientFeeError: mocks.isInsufficientFeeError,
+  EscrowClient: vi.fn(),
 }));
 
 vi.mock("../queues/payout.queue", () => ({
   payoutQueue: {
     add: mocks.queueAdd,
   },
+  payoutJobOptions: { attempts: 3 },
+}));
+
+vi.mock("../queues/leaderboard-refresh.queue", () => ({
+  enqueueLeaderboardRefresh: mocks.enqueueLeaderboardRefresh,
 }));
 
 vi.mock("../lib/redis", () => ({
+  redis: {},
   emitCounterMetric: mocks.emitCounterMetric,
   stellarSequenceStore: {
     get: vi.fn(),
@@ -151,6 +176,8 @@ describe("processPayout", () => {
       ]
     );
     mocks.isRetriableStellarError.mockReturnValue(false);
+    mocks.isInsufficientFeeError.mockReturnValue(false);
+    mocks.getLicensePayoutTerms.mockResolvedValue(null);
   });
 
   it("builds a non-empty recipients list from ranked winners", async () => {
@@ -183,6 +210,37 @@ describe("processPayout", () => {
     expect(recipients.map((r) => r.address)).toEqual([
       "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
       "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBQ2",
+    ]);
+  });
+
+  it("splits a licensed challenge fee to the licensor through the payout batch", async () => {
+    mocks.getLicensePayoutTerms.mockResolvedValue({
+      fee_bps: 1000,
+      user_id: "licensor-user",
+      stellar_address: "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    });
+    mocks.getLeaderboard.mockResolvedValue([
+      buildLeaderboardSession({
+        user_id: "winner-user",
+        total_score: 300,
+        stellar_address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+      }),
+    ]);
+
+    await processPayout("challenge-1");
+
+    const [recipients] = mocks.submitBatchPayout.mock.calls[0] as [
+      Array<{ address: string; amount: string }>
+    ];
+    expect(recipients).toEqual([
+      {
+        address: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        amount: "81.0000000",
+      },
+      {
+        address: "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+        amount: "9.0000000",
+      },
     ]);
   });
 
@@ -309,8 +367,8 @@ describe("processPayout", () => {
     mocks.getChallengeById.mockResolvedValue({
       ...challengeFixture,
       id: "challenge-5",
-      pool_amount_stroops: "1",
-      pool_amount_usdc: "0.0000001",
+      pool_amount_stroops: "2",
+      pool_amount_usdc: "0.0000002",
     });
     mocks.getLeaderboard.mockResolvedValue([
       buildLeaderboardSession({ id: "session-1", user_id: "user-1", total_score: 9999999, stellar_address: "GUSER1" }),
@@ -339,6 +397,40 @@ describe("processPayout", () => {
       "challenge-5",
       "testnet",
       expect.any(Object)
+    );
+  });
+
+  it("gives players with tied total scores an equal proportional payout share", async () => {
+    mocks.getChallengeById.mockResolvedValue({
+      ...challengeFixture,
+      id: "challenge-tie",
+      pool_amount_stroops: "1000000000",
+      pool_amount_usdc: "100.0000000",
+    });
+    mocks.getLeaderboard.mockResolvedValue([
+      buildLeaderboardSession({
+        id: "session-1",
+        user_id: "user-1",
+        total_score: 150,
+        completed_at: "2026-04-24T10:10:00.000Z",
+        stellar_address: "GUSER1",
+      }),
+      buildLeaderboardSession({
+        id: "session-2",
+        user_id: "user-2",
+        total_score: 150,
+        completed_at: "2026-04-24T10:20:00.000Z",
+        stellar_address: "GUSER2",
+      }),
+    ]);
+
+    await processPayout("challenge-tie");
+
+    expect(mocks.createPayout).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-1", amountStroops: 500_000_000n })
+    );
+    expect(mocks.createPayout).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "user-2", amountStroops: 500_000_000n })
     );
   });
 

@@ -29,11 +29,12 @@ export function SessionRecoveryModal({
   onStartNew,
 }: SessionRecoveryModalProps) {
   const dialogRef = React.useRef<HTMLDivElement>(null);
+  const [confirmingForfeit, setConfirmingForfeit] = React.useState(false);
 
   React.useEffect(() => {
     const firstButton = dialogRef.current?.querySelector<HTMLButtonElement>("button");
     firstButton?.focus();
-  }, []);
+  }, [confirmingForfeit]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "Tab") return;
@@ -68,12 +69,14 @@ export function SessionRecoveryModal({
       >
         <div className="space-y-2">
           <h2 id="session-recovery-title" className="text-xl font-semibold">
-            {expired ? "Session expired" : "Resume challenge?"}
+            {expired ? "Session expired" : confirmingForfeit ? "Forfeit session?" : "Resume challenge?"}
           </h2>
           <p id="session-recovery-description" className="text-sm text-[var(--muted-foreground)]">
             {expired
               ? "This challenge session timed out before it was completed."
-              : "We found an interrupted challenge session for this account."}
+              : confirmingForfeit
+                ? "Are you sure you want to forfeit? Your current score and progress will be lost."
+                : "We found an interrupted challenge session for this account."}
           </p>
         </div>
 
@@ -97,9 +100,18 @@ export function SessionRecoveryModal({
             <Button type="button" onClick={onStartNew}>
               Start New
             </Button>
+          ) : confirmingForfeit ? (
+            <>
+              <Button type="button" variant="outline" onClick={() => setConfirmingForfeit(false)}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={onForfeit}>
+                Confirm Forfeit
+              </Button>
+            </>
           ) : (
             <>
-              <Button type="button" variant="outline" onClick={onForfeit}>
+              <Button type="button" variant="outline" onClick={() => setConfirmingForfeit(true)}>
                 Forfeit
               </Button>
               <Button type="button" onClick={onResume}>

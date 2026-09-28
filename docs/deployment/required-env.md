@@ -56,3 +56,10 @@ See [rotate-s3-credentials runbook](../runbooks/rotate-s3-credentials.md).
 
 The `gitleaks.yml` workflow verifies `NODE_ENV=production` is set in the prod compose
 layer and fails if the `:-development` default is re-introduced in `docker-compose.yml`.
+
+## Validation
+
+Run `pnpm validate-env-example` locally to verify `.env.example` stays in sync with
+`apps/api/src/lib/config-schema.ts`. The `validate-env-example` CI job runs the same
+script (`scripts/validate-env-example.ts`) on every PR and blocks merge when
+`.env.example` is missing required vars or contains invalid values.

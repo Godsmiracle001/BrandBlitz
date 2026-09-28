@@ -35,7 +35,7 @@ export function useLiveLeaderboard(opts?: {
   const reconnectTimerRef = useRef<number | null>(null);
 
   const pollUrl = useMemo(() => {
-    if (challengeId) return `/leaderboard/${challengeId}?limit=100&offset=0`;
+    if (challengeId) return `/leaderboard/${challengeId}?limit=100`;
     return "/leaderboard/global";
   }, [challengeId]);
 
@@ -83,7 +83,8 @@ export function useLiveLeaderboard(opts?: {
             : res.data.leaderboard;
           clearConnectionError();
           setState({ status: "polling", entries: nextEntries });
-        } catch {
+        } catch (err) {
+          console.error("Failed to fetch leaderboard:", err);
           reportConnectionError();
         }
       };

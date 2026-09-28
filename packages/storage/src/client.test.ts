@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { getPublicUrl, BUCKETS } from "./client";
+import { getPublicUrl, BUCKETS, uploadObject, StorageValidationError, s3 } from "./client";
 
 describe("storage client", () => {
   const originalEnv = process.env;
@@ -48,6 +48,33 @@ describe("storage client", () => {
       expect(getPublicUrl("my-bucket", "image.webp")).toBe(
         "/my-bucket/image.webp"
       );
+    });
+  });
+
+  describe("uploadObject validation (issue #505)", () => {
+    const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+    it("rejects an empty buffer before writing to storage", async () => {
+      const sendSpy = vi.spyOn(s3, "send");
+      await expect(
+        uploadObject({ bucket: "b", key: "k", body: Buffer.alloc(0), contentType: "image/png" }),
+      ).rejects.toBeInstanceOf(StorageValidationError);
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("rejects image content whose magic bytes contradict the declared type", async () => {
+      const sendSpy = vi.spyOn(s3, "send");
+      const notPng = Buffer.from([0xff, 0xd8, 0xff, 0xe0]); // JPEG bytes, declared PNG
+      await expect(
+        uploadObject({ bucket: "b", key: "k", body: notPng, contentType: "image/png" }),
+      ).rejects.toBeInstanceOf(StorageValidationError);
+      expect(sendSpy).not.toHaveBeenCalled();
+    });
+
+    it("writes a valid image whose magic bytes match the declared type", async () => {
+      const sendSpy = vi.spyOn(s3, "send").mockResolvedValue({} as never);
+      await uploadObject({ bucket: "b", key: "k", body: PNG, contentType: "image/png" });
+      expect(sendSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -2,19 +2,21 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 
 // ── mocks ────────────────────────────────────────────────────────────────────
 
-const mockFindPendingErasureRequest = vi.fn();
-const mockAnonymizeUser = vi.fn();
-const mockMarkErasureExecuted = vi.fn();
-const mockRevokeAllUserRefreshTokens = vi.fn();
+const mocks = vi.hoisted(() => ({
+  findPendingErasureRequest: vi.fn(),
+  anonymizeUser: vi.fn(),
+  markErasureExecuted: vi.fn(),
+  revokeAllUserRefreshTokens: vi.fn(),
+}));
 
 vi.mock("../../db/queries/gdpr", () => ({
-  findPendingErasureRequest: mockFindPendingErasureRequest,
-  anonymizeUser: mockAnonymizeUser,
-  markErasureExecuted: mockMarkErasureExecuted,
+  findPendingErasureRequest: mocks.findPendingErasureRequest,
+  anonymizeUser: mocks.anonymizeUser,
+  markErasureExecuted: mocks.markErasureExecuted,
 }));
 
 vi.mock("../../lib/tokens", () => ({
-  revokeAllUserRefreshTokens: mockRevokeAllUserRefreshTokens,
+  revokeAllUserRefreshTokens: mocks.revokeAllUserRefreshTokens,
 }));
 
 vi.mock("../../lib/redis", () => ({
@@ -41,44 +43,44 @@ describe("processGdprErasureJob", () => {
   it("anonymises user, revokes tokens and marks request executed when request is pending", async () => {
     const userId = "user-abc";
     const requestId = "req-abc";
-    mockFindPendingErasureRequest.mockResolvedValueOnce({ id: requestId, user_id: userId });
-    mockAnonymizeUser.mockResolvedValueOnce(undefined);
-    mockRevokeAllUserRefreshTokens.mockResolvedValueOnce(undefined);
-    mockMarkErasureExecuted.mockResolvedValueOnce(undefined);
+    mocks.findPendingErasureRequest.mockResolvedValueOnce({ id: requestId, user_id: userId });
+    mocks.anonymizeUser.mockResolvedValueOnce(undefined);
+    mocks.revokeAllUserRefreshTokens.mockResolvedValueOnce(undefined);
+    mocks.markErasureExecuted.mockResolvedValueOnce(undefined);
 
     await processGdprErasureJob(makeJob({ userId, requestId }));
 
-    expect(mockAnonymizeUser).toHaveBeenCalledWith(userId);
-    expect(mockRevokeAllUserRefreshTokens).toHaveBeenCalledWith(userId);
-    expect(mockMarkErasureExecuted).toHaveBeenCalledWith(requestId);
+    expect(mocks.anonymizeUser).toHaveBeenCalledWith(userId);
+    expect(mocks.revokeAllUserRefreshTokens).toHaveBeenCalledWith(userId);
+    expect(mocks.markErasureExecuted).toHaveBeenCalledWith(requestId);
   });
 
   it("skips anonymisation when request is cancelled (no pending request found)", async () => {
-    mockFindPendingErasureRequest.mockResolvedValueOnce(null);
+    mocks.findPendingErasureRequest.mockResolvedValueOnce(null);
 
     await processGdprErasureJob(makeJob({ userId: "user-xyz", requestId: "req-xyz" }));
 
-    expect(mockAnonymizeUser).not.toHaveBeenCalled();
-    expect(mockRevokeAllUserRefreshTokens).not.toHaveBeenCalled();
-    expect(mockMarkErasureExecuted).not.toHaveBeenCalled();
+    expect(mocks.anonymizeUser).not.toHaveBeenCalled();
+    expect(mocks.revokeAllUserRefreshTokens).not.toHaveBeenCalled();
+    expect(mocks.markErasureExecuted).not.toHaveBeenCalled();
   });
 
   it("skips when a newer request supersedes the job's requestId", async () => {
-    mockFindPendingErasureRequest.mockResolvedValueOnce({
+    mocks.findPendingErasureRequest.mockResolvedValueOnce({
       id: "req-newer",
       user_id: "user-abc",
     });
 
     await processGdprErasureJob(makeJob({ userId: "user-abc", requestId: "req-old" }));
 
-    expect(mockAnonymizeUser).not.toHaveBeenCalled();
+    expect(mocks.anonymizeUser).not.toHaveBeenCalled();
   });
 
   it("is idempotent: skips when no pending request exists (already executed)", async () => {
-    mockFindPendingErasureRequest.mockResolvedValueOnce(null);
+    mocks.findPendingErasureRequest.mockResolvedValueOnce(null);
 
     await processGdprErasureJob(makeJob({ userId: "user-done", requestId: "req-done" }));
 
-    expect(mockAnonymizeUser).not.toHaveBeenCalled();
+    expect(mocks.anonymizeUser).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,26 @@
+{
+  "name": "@brandblitz/config",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.11.0 <23"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0",
+    "tsup": "8.5.1",
+    "typescript": "6.0.2"
+  }
+}

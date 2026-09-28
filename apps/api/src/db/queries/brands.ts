@@ -12,6 +12,7 @@ export interface Brand {
   brand_story: string | null;
   usp: string | null;
   product_image_keys: string[];
+  question_template: Record<string, unknown> | null;
   deleted_at?: string | null;
   created_at: string;
 }
@@ -20,11 +21,35 @@ export type BrandApi = Brand & {
   product_image_urls: string[];
 };
 
+/** Public-safe brand data. Owner identity and internal deletion metadata stay private. */
+export type PublicBrand = Pick<
+  Brand,
+  | "id"
+  | "name"
+  | "logo_url"
+  | "primary_color"
+  | "secondary_color"
+  | "tagline"
+  | "brand_story"
+  | "usp"
+  | "product_image_keys"
+  | "created_at"
+>;
+
 export function getProductImageUrls(brand: Pick<Brand, "product_image_keys">): string[] {
   return (brand.product_image_keys ?? []).map((key) => getPublicUrl(BUCKETS.BRAND_ASSETS, key));
 }
 
 export function toBrandApi(brand: Brand): BrandApi {
+  return {
+    ...brand,
+    product_image_urls: getProductImageUrls(brand),
+  };
+}
+
+export function toPublicBrandApi(brand: PublicBrand): PublicBrand & {
+  product_image_urls: string[];
+} {
   return {
     ...brand,
     product_image_urls: getProductImageUrls(brand),
@@ -64,6 +89,35 @@ export async function getBrandsByOwner(ownerUserId: string): Promise<Brand[]> {
 export async function getBrandById(id: string): Promise<Brand | null> {
   const result = await query<Brand>("SELECT * FROM brands WHERE id = $1 AND deleted_at IS NULL", [id]);
   return result.rows[0] ?? null;
+}
+
+export async function getPublicBrandById(id: string): Promise<PublicBrand | null> {
+  const result = await query<PublicBrand>(
+    `SELECT id, name, logo_url, primary_color, secondary_color, tagline,
+            brand_story, usp, product_image_keys, created_at
+     FROM brands WHERE id = $1 AND deleted_at IS NULL`,
+    [id],
+  );
+  return result.rows[0] ?? null;
+}
+
+export async function getPublicBrands(limit = 50): Promise<PublicBrand[]> {
+  const result = await query<PublicBrand>(
+    `SELECT id, name, logo_url, primary_color, secondary_color, tagline,
+            brand_story, usp, product_image_keys, created_at
+     FROM brands b
+     WHERE b.deleted_at IS NULL
+       AND EXISTS (
+         SELECT 1 FROM challenges c
+         WHERE c.brand_id = b.id
+           AND c.status = 'active'
+           AND c.deleted_at IS NULL
+       )
+     ORDER BY created_at DESC
+     LIMIT $1`,
+    [limit],
+  );
+  return result.rows;
 }
 
 export async function getBrandMetaById(
@@ -111,6 +165,7 @@ const UPDATABLE_BRAND_COLUMNS = [
   "usp",
   "product_image_1_url",
   "product_image_2_url",
+  "question_template",
 ] as const;
 
 type UpdatableBrandColumn = (typeof UPDATABLE_BRAND_COLUMNS)[number];
@@ -143,12 +198,40 @@ export async function updateBrand(
   return result.rows[0] ?? null;
 }
 
-export async function deleteBrand(id: string, ownerUserId: string): Promise<boolean> {
-  const result = await query(
-    "UPDATE brands SET deleted_at = NOW() WHERE id = $1 AND owner_user_id = $2 AND deleted_at IS NULL RETURNING id",
-    [id, ownerUserId]
+export async function deleteBrand(
+  id: string,
+  ownerUserId?: string,
+): Promise<{ deletedAt: string; cancelledChallenges: number } | null> {
+  const result = await query<{ deleted_at: string; cancelled_count: number }>(
+    `WITH deleted_brand AS (
+       UPDATE brands
+       SET deleted_at = NOW()
+       WHERE id = $1
+         AND deleted_at IS NULL
+         AND ($2::uuid IS NULL OR owner_user_id = $2)
+       RETURNING id, deleted_at
+     ),
+     cancelled AS (
+       UPDATE challenges
+       SET status = 'cancelled'
+       WHERE brand_id IN (SELECT id FROM deleted_brand)
+         AND status IN ('pending_deposit', 'active')
+         AND deleted_at IS NULL
+       RETURNING id
+     )
+     SELECT db.deleted_at, COUNT(c.id)::int AS cancelled_count
+     FROM deleted_brand db
+     LEFT JOIN cancelled c ON TRUE
+     GROUP BY db.deleted_at`,
+    [id, ownerUserId ?? null],
   );
-  return (result.rowCount ?? 0) > 0;
+  const row = result.rows[0];
+  return row
+    ? {
+        deletedAt: row.deleted_at,
+        cancelledChallenges: row.cancelled_count,
+      }
+    : null;
 }
 
 export interface BrandChallengeStats {

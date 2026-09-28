@@ -124,6 +124,7 @@ The `pending_uploads` table is not yet in the schema — add a migration when im
 
 ## Related
 
+- [Upload API reference](./api/upload.md) — Full endpoint reference for presign, verify, complete, abort
 - `apps/api/src/routes/upload.ts` — presign, verify, and abort API routes
 - `apps/web/src/components/brand/upload-field.tsx` — client upload component with retry logic
 - `packages/storage/src/client.ts` — S3 client and bucket constants

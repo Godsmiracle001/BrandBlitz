@@ -6,14 +6,14 @@ Brand logos and product images are uploaded to MinIO / Cloudflare R2 and served
 from `https://assets.brandblitz.app`. After `optimizeImage` runs, every object
 is stored with:
 
-```
+```text
 Cache-Control: public, max-age=31536000, immutable
 ```
 
 This is safe because `optimizeImage` embeds an 8-hex-char SHA-256 content hash
 in every optimised key:
 
-```
+```text
 logos/<uuid>-<8hexchars>.webp
 products/<uuid>-<8hexchars>.webp
 ```
@@ -28,7 +28,7 @@ needed.
 ## When is a purge needed?
 
 | Event | Action needed? |
-|---|---|
+| --- | --- |
 | Player uploads a new brand logo | **No** — `optimizeImage` creates a new content-hashed URL |
 | Brand owner re-submits the same image | **No** — same hash → same URL already in cache |
 | A corrupt/bad image was served and needs to be removed immediately | **Yes** — purge the specific key |

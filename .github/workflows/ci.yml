@@ -61,20 +61,60 @@ jobs:
             exit 1
           fi
 
-  # ── Unit tests ───────────────────────────────────────────────────────────────
-  test-api:
-    name: API unit tests
+  # ── Validate .env.example vs config schema ──────────────────────────────────
+  validate-env-example:
+    name: Validate .env.example vs config schema
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Validate .env.example against config schema
+        run: pnpm validate-env-example
+
+  # ── Unit tests ───────────────────────────────────────────────────────────────
+  test-api:
+    name: API unit tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: brandblitz
+          POSTGRES_PASSWORD: brandblitz_dev
+          POSTGRES_DB: brandblitz_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Seed test database
+        run: psql -h localhost -U brandblitz -d brandblitz_test -f init.sql
+        env:
+          PGPASSWORD: brandblitz_dev
       - run: pnpm --filter @brandblitz/api test
 
   test-web:
@@ -83,8 +123,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -98,8 +136,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -114,8 +150,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -141,8 +175,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22

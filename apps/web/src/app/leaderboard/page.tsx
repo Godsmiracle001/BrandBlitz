@@ -2,6 +2,7 @@ import { api } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { LeaderboardEntry } from "@/lib/api";
 import { LiveGlobalLeaderboard } from "@/components/leaderboard/live-global-leaderboard";
+import { LastUpdated } from "@/components/leaderboard/last-updated";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -26,6 +27,7 @@ async function getGlobalLeaderboard(): Promise<{
   entries: LeaderboardEntry[];
   hasMore: boolean;
   failed: boolean;
+  fetchedAt: number;
 }> {
   try {
     const res = await api.get("/leaderboard/global?limit=50&offset=0");
@@ -33,12 +35,14 @@ async function getGlobalLeaderboard(): Promise<{
       entries: res.data.leaderboard,
       hasMore: Boolean(res.data.pagination?.hasMore),
       failed: false,
+      fetchedAt: Date.now(),
     };
   } catch {
     return {
       entries: [],
       hasMore: false,
       failed: true,
+      fetchedAt: Date.now(),
     };
   }
 }
@@ -65,7 +69,7 @@ function LeaderboardSkeleton() {
 }
 
 async function LeaderboardContent() {
-  const { entries, hasMore, failed } = await getGlobalLeaderboard();
+  const { entries, hasMore, failed, fetchedAt } = await getGlobalLeaderboard();
 
   if (failed) {
     return (
@@ -83,7 +87,16 @@ async function LeaderboardContent() {
     );
   }
 
-  return <LiveGlobalLeaderboard initial={entries} initialHasMore={hasMore} />;
+  const initialAgeSeconds = Math.max(0, Math.floor((Date.now() - fetchedAt) / 1000));
+
+  return (
+    <div>
+      <div className="flex justify-end px-6 pt-4">
+        <LastUpdated fetchedAt={fetchedAt} initialAgeSeconds={initialAgeSeconds} />
+      </div>
+      <LiveGlobalLeaderboard initial={entries} initialHasMore={hasMore} />
+    </div>
+  );
 }
 
 export default function LeaderboardPage() {
@@ -92,7 +105,17 @@ export default function LeaderboardPage() {
       <OfflineBanner />
       <main className="mx-auto max-w-3xl px-6 py-12">
         <h1 className="mb-2 text-3xl font-bold">Global Leaderboard</h1>
-        <p className="mb-8 text-[var(--muted-foreground)]">Top performers across all challenges</p>
+        <p className="mb-8 text-[var(--muted-foreground)]">
+          Top performers across all challenges{" "}
+          <Link
+            href="/docs/guides/scoring-explained"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:text-[var(--foreground)]"
+          >
+            How scoring works
+          </Link>
+        </p>
 
         <Card>
           <CardHeader>

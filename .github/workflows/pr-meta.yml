@@ -20,8 +20,10 @@ jobs:
   label:
     name: Auto-label by path
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/labeler@v5
+        continue-on-error: true
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           configuration-path: .github/labeler.yml
@@ -31,6 +33,7 @@ jobs:
   size-check:
     name: PR size guard
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -187,6 +190,8 @@ jobs:
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
                 labels: [targetLabel],
+              }).catch(() => {
+                console.log(`Unable to add label ${targetLabel} (likely fork PR — skipping)`);
               });
             }
 

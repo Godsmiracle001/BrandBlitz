@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { BrandKitForm } from "./brand-kit-form";
 import * as apiModule from "@/lib/api";
 
@@ -24,7 +23,7 @@ vi.mock("@/lib/api", () => ({
 // Mock the upload field
 vi.mock("./upload-field", () => ({
   UploadField: ({ label, onUploaded }: any) => (
-    <button type="button" onClick={() => onUploaded("test-logo-key")}>
+    <button type="button" onClick={() => onUploaded("test-logo-key", "https://cdn.example.com/logo.png")}>
       {label}
     </button>
   ),
@@ -43,7 +42,7 @@ describe("BrandKitForm", () => {
   });
 
   it("should redirect to /brand/[id] without query params containing secrets", async () => {
-    const user = userEvent.setup();
+    vi.useRealTimers();
 
     // Mock successful API responses
     mockApiClient.post.mockImplementation((endpoint: string) => {
@@ -71,14 +70,18 @@ describe("BrandKitForm", () => {
     render(<BrandKitForm apiToken="test-token" />);
 
     // Fill in required fields
-    await user.type(screen.getByLabelText(/Brand Name/i), "Test Brand");
-    await user.type(screen.getByLabelText(/Prize Pool/i), "100");
+    fireEvent.change(screen.getByLabelText(/Brand Name/i), {
+      target: { value: "Test Brand" },
+    });
+    fireEvent.change(screen.getByLabelText(/Prize Pool/i), {
+      target: { value: "100" },
+    });
 
     // Upload logo
-    await user.click(screen.getByText("Upload Brand Logo"));
+    fireEvent.click(screen.getByText("Upload Brand Logo"));
 
     // Submit form
-    await user.click(screen.getByRole("button", { name: /Create Brand Kit/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Create Brand Kit/i }));
 
     // Wait for redirect
     await waitFor(() => {

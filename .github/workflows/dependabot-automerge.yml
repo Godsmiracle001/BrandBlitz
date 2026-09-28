@@ -20,10 +20,29 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Issue #1182 — pre-1.0 native-binding packages: npm/dependabot classify
+      # a 0.x.y -> 0.x+1.0 bump as "minor," but per SemVer's own spec a pre-1.0
+      # minor bump is allowed to be breaking. @napi-rs/canvas is pre-1.0 and
+      # renders brand assets/leaderboard graphics via a compiled native
+      # binding, so an auto-merged "minor" bump could silently ship a broken
+      # or ABI-incompatible binary. Add more pre-1.0 native-binding deps here
+      # as they're introduced.
+      - name: Check for pre-1.0 native-binding packages requiring manual review
+        id: risk
+        run: |
+          NAMES="${{ steps.meta.outputs.dependency-names }}"
+          if echo "$NAMES" | grep -qE '(^|, )@napi-rs/canvas($|,)'; then
+            echo "requires_manual_review=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "requires_manual_review=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Approve the PR
         if: |
-          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
-          steps.meta.outputs.update-type == 'version-update:semver-minor'
+          steps.risk.outputs.requires_manual_review == 'false' && (
+            steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+            steps.meta.outputs.update-type == 'version-update:semver-minor'
+          )
         run: gh pr review --approve "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -31,12 +50,15 @@ jobs:
 
       - name: Enable auto-merge (squash) for patch and minor updates
         if: |
-          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
-          steps.meta.outputs.update-type == 'version-update:semver-minor'
+          steps.risk.outputs.requires_manual_review == 'false' && (
+            steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+            steps.meta.outputs.update-type == 'version-update:semver-minor'
+          )
         run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # Auto-merge only activates once all required status checks pass
-        # (branch protection must require CI to pass before merge).
+        # (branch protection must require CI to pass before merge), which
+        # now includes apps/api/src/canvas-smoke.test.ts for @napi-rs/canvas.
         # Major updates are deliberately excluded — they always require human review.

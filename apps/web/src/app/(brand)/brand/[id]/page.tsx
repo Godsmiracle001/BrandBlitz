@@ -1,284 +1,120 @@
-"use client";
-
-import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import Image from "next/image";
-import { createApiClient } from "@/lib/api";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatUsdc } from "@/lib/format";
-import type { LeaderboardEntry } from "@/lib/api";
-import { EmptyState } from "@/components/ui/empty-state";
-import { LiveChallengeLeaderboard } from "@/components/leaderboard/live-challenge-leaderboard";
-import { toast } from "@/lib/toast";
+import { notFound } from "next/navigation";
 
-interface DepositInfo {
-  hotWalletAddress: string;
-  memo: string;
-  amount: string;
+export const revalidate = 60;
+export const dynamicParams = true;
+
+const TOP_BRAND_PROFILE_COUNT = 50;
+
+type PublicBrand = {
+  id: string;
+  name: string;
+  logo_url: string | null;
+  primary_color: string | null;
+  secondary_color: string | null;
+  tagline: string | null;
+  brand_story: string | null;
+  usp: string | null;
+  product_image_urls: string[];
+};
+
+function apiBaseUrl(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
 }
 
-function normalizeBrand(brand: any) {
-  if (!brand) return null;
-
-  return {
-    ...brand,
-    logoUrl: brand.logoUrl ?? brand.logo_url ?? null,
-    primaryColor: brand.primaryColor ?? brand.primary_color ?? null,
-    secondaryColor: brand.secondaryColor ?? brand.secondary_color ?? null,
-  };
+async function fetchPublicBrand(id: string): Promise<PublicBrand | null> {
+  const response = await fetch(`${apiBaseUrl()}/brands/public/${id}`, {
+    next: { revalidate },
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("Unable to load brand profile");
+  return (await response.json()).brand as PublicBrand;
 }
 
-function normalizeChallenge(challenge: any) {
-  if (!challenge) return null;
-
-  return {
-    ...challenge,
-    poolAmountUsdc: challenge.poolAmountUsdc ?? challenge.pool_amount_usdc ?? "0",
-    participantCount: challenge.participantCount ?? challenge.participant_count ?? 0,
-  };
-}
-
-export default function BrandAnalyticsPage() {
-  const { data: session, status } = useSession();
-  const params = useParams();
-  const router = useRouter();
-  const apiToken = (session as { apiToken?: string } | null)?.apiToken;
-  const brandId = params.id as string;
-
-  const [brand, setBrand] = useState<any>(null);
-  const [challenge, setChallenge] = useState<any>(null);
-  const [depositInfo, setDepositInfo] = useState<DepositInfo | null>(null);
-  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [brandLoadError, setBrandLoadError] = useState(false);
-  const [challengeLoadError, setChallengeLoadError] = useState(false);
-  const [leaderboardLoadError, setLeaderboardLoadError] = useState(false);
-
-  async function loadAnalytics(apiToken: string) {
-    setLoading(true);
-    setBrandLoadError(false);
-    setChallengeLoadError(false);
-    setLeaderboardLoadError(false);
-
-    const api = createApiClient(apiToken);
-    const [brandResult, challengeResult] = await Promise.allSettled([
-      api.get(`/brands/${brandId}`),
-      api.get(`/challenges?brandId=${brandId}&limit=1`),
-    ]);
-
-    if (brandResult.status === "rejected") {
-      setBrand(null);
-      setChallenge(null);
-      setLeaderboard([]);
-      setBrandLoadError(true);
-      setLoading(false);
-      toast.error("Couldn't load brand details. Please try again.");
-      return;
-    }
-
-    setBrand(normalizeBrand(brandResult.value.data.brand));
-
-    if (challengeResult.status === "rejected") {
-      setChallenge(null);
-      setLeaderboard([]);
-      setChallengeLoadError(true);
-      setLoading(false);
-      toast.error("Couldn't load challenges for this brand. Please try again.");
-      return;
-    }
-
-    const latestChallenge = normalizeChallenge(challengeResult.value.data.challenges[0]);
-    setChallenge(latestChallenge ?? null);
-
-    // Fetch deposit info if challenge exists and is pending deposit
-    if (latestChallenge && latestChallenge.status === "pending_deposit") {
-      try {
-        const depositRes = await api.get(`/challenges/${latestChallenge.id}/deposit-info`);
-        setDepositInfo(depositRes.data.depositInfo);
-      } catch (err) {
-        // Silently fail if deposit info is not available
-        setDepositInfo(null);
-      }
-    } else {
-      setDepositInfo(null);
-    }
-
-    if (!latestChallenge) {
-      setLeaderboard([]);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const leaderboardResponse = await api.get(`/challenges/${latestChallenge.id}/leaderboard`);
-      setLeaderboard(leaderboardResponse.data.sessions);
-    } catch {
-      setLeaderboard([]);
-      setLeaderboardLoadError(true);
-      toast.error("Couldn't load the challenge leaderboard. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/login");
-      return;
-    }
-    if (status !== "authenticated" || !apiToken) return;
-
-    void loadAnalytics(apiToken);
-  }, [apiToken, status, router, brandId]);
-
-  if (loading) {
-    return null;
-  }
-
-  if (!brand) {
-    return (
-      <main className="mx-auto max-w-2xl px-6 py-12">
-        {brandLoadError ? (
-          <EmptyState
-            title="Couldn't load brand"
-            description="We couldn't load this brand — tap to retry."
-            action={
-              <Button disabled={!apiToken} onClick={() => apiToken && void loadAnalytics(apiToken)}>
-                Try Again
-              </Button>
-            }
-          />
-        ) : (
-          <p className="text-[var(--muted-foreground)]">Brand not found.</p>
-        )}
-      </main>
+/** Pre-render the newest active brand profiles; all other IDs use ISR on demand. */
+export async function generateStaticParams(): Promise<Array<{ id: string }>> {
+  try {
+    const response = await fetch(
+      `${apiBaseUrl()}/brands/public?limit=${TOP_BRAND_PROFILE_COUNT}`,
+      { next: { revalidate } },
     );
+    if (!response.ok) return [];
+    const data = await response.json() as { brands: Array<{ id: string }> };
+    return data.brands.map(({ id }) => ({ id }));
+  } catch {
+    // The API may not be available during a standalone web build. Profiles
+    // still render dynamically on their first request because dynamicParams is true.
+    return [];
   }
+}
+
+export default async function BrandProfilePage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const brand = await fetchPublicBrand(id);
+  if (!brand) notFound();
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
-      <div className="mb-8 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          {brand.logoUrl ? (
-            <Image
-              src={brand.logoUrl}
-              alt={brand.name}
-              width={200}
-              height={64}
-              sizes="200px"
-              className="h-16 w-auto object-contain"
-            />
-          ) : (
-            <div
-              className="h-16 w-16 rounded-xl"
-              style={{ backgroundColor: brand.primaryColor ?? "var(--primary)" }}
-            />
-          )}
-          <div>
-            <h1 className="text-2xl font-bold">{brand.name}</h1>
-            <p className="text-[var(--muted-foreground)]">{brand.tagline}</p>
-          </div>
-        </div>
-        <Link href={`/brand/${brandId}/challenge/new`}>
-          <Button>Launch New Challenge</Button>
-        </Link>
-      </div>
-
-      {challenge && (
-        <>
-          {depositInfo ? (
-            <Card className="mb-8 border-amber-300 bg-amber-50">
-              <CardHeader>
-                <CardTitle>Deposit Instructions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm">
-                <p>Fund this challenge to activate it on-chain.</p>
-                <div className="space-y-1 font-mono text-xs text-slate-700">
-                  <p>Address: {depositInfo.hotWalletAddress}</p>
-                  <p>Memo: {depositInfo.memo}</p>
-                  {depositInfo.amount ? <p>Amount: {depositInfo.amount} USDC</p> : null}
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          <div className="mb-8 grid grid-cols-3 gap-4">
-            {[
-              { label: "Pool Size", value: `${formatUsdc(challenge.poolAmountUsdc)} USDC` },
-              { label: "Participants", value: challenge.participantCount ?? 0 },
-              { label: "Status", value: challenge.status },
-            ].map(({ label, value }) => (
-              <Card key={label} className="text-center">
-                <CardContent className="pb-4 pt-6">
-                  <p className="text-xl font-bold text-[var(--primary)]">{value}</p>
-                  <p className="mt-1 text-xs text-[var(--muted-foreground)]">{label}</p>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {leaderboardLoadError ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Leaderboard unavailable</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <EmptyState
-                  title="Couldn't load leaderboard"
-                  description="We couldn't load the latest rankings — tap to retry."
-                  action={
-                    <Button
-                      disabled={!apiToken}
-                      onClick={() => apiToken && void loadAnalytics(apiToken)}
-                    >
-                      Try Again
-                    </Button>
-                  }
-                />
-              </CardContent>
-            </Card>
-          ) : leaderboard.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Current Leaderboard</CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <LiveChallengeLeaderboard
-                  key={challenge.id}
-                  challengeId={challenge.id}
-                  initial={leaderboard}
-                />
-              </CardContent>
-            </Card>
-          ) : null}
-        </>
-      )}
-
-      {!challenge &&
-        (challengeLoadError ? (
-          <EmptyState
-            title="Couldn't load challenges"
-            description="We couldn't load this brand's challenges — tap to retry."
-            action={
-              <Button disabled={!apiToken} onClick={() => apiToken && void loadAnalytics(apiToken)}>
-                Try Again
-              </Button>
-            }
+    <article className="mx-auto max-w-4xl px-6 py-12">
+      <header className="flex flex-col gap-6 sm:flex-row sm:items-center">
+        {brand.logo_url ? (
+          <Image
+            src={brand.logo_url}
+            alt={`${brand.name} logo`}
+            width={160}
+            height={160}
+            sizes="160px"
+            className="h-32 w-32 rounded-2xl object-contain"
           />
         ) : (
-          <EmptyState
-            title="This brand has no challenges yet"
-            description="Launch your first challenge to start attracting players and tracking performance."
-            action={
-              <Link href={`/brand/${brandId}/challenge/new`}>
-                <Button>Launch a Challenge</Button>
-              </Link>
-            }
+          <div
+            aria-hidden="true"
+            className="h-32 w-32 rounded-2xl"
+            style={{ backgroundColor: brand.primary_color ?? "#6366f1" }}
           />
-        ))}
-    </main>
+        )}
+        <div>
+          <h1 className="text-4xl font-bold">{brand.name}</h1>
+          {brand.tagline ? (
+            <p className="mt-2 text-lg text-[var(--muted-foreground)]">{brand.tagline}</p>
+          ) : null}
+        </div>
+      </header>
+
+      {brand.brand_story ? (
+        <section className="mt-10">
+          <h2 className="text-xl font-semibold">Our story</h2>
+          <p className="mt-3 whitespace-pre-line text-[var(--muted-foreground)]">{brand.brand_story}</p>
+        </section>
+      ) : null}
+
+      {brand.usp ? (
+        <section className="mt-8 rounded-2xl bg-[var(--muted)] p-6">
+          <h2 className="text-xl font-semibold">What makes us different</h2>
+          <p className="mt-2 text-[var(--muted-foreground)]">{brand.usp}</p>
+        </section>
+      ) : null}
+
+      {brand.product_image_urls.length > 0 ? (
+        <section className="mt-10">
+          <h2 className="text-xl font-semibold">Products</h2>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            {brand.product_image_urls.map((url, index) => (
+              <Image
+                key={url}
+                src={url}
+                alt={`${brand.name} product ${index + 1}`}
+                width={800}
+                height={600}
+                className="h-auto w-full rounded-xl object-cover"
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </article>
   );
 }

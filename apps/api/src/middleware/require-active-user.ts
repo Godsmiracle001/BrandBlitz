@@ -26,7 +26,7 @@ export async function requireActiveUser(
     throw createError("User not found", 404, "USER_NOT_FOUND");
   }
 
-  if ((user as any).status === "suspended") {
+  if (user.status === "suspended" || user.suspended_at !== null) {
     throw createError(
       "Your account has been suspended. Please contact support for assistance.",
       403,

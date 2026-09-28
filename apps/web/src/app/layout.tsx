@@ -3,8 +3,10 @@ import { Inter } from "next/font/google";
 import Script from "next/script";
 import { AuthBoundary } from "@/components/auth/auth-boundary";
 import { Providers } from "@/components/providers";
+import { MaintenanceBanner } from "@/components/layout/maintenance-banner";
 import { getCspNonce } from "@/lib/csp";
 import { FingerprintProvider } from "@/components/providers/fingerprint-provider";
+import { GlobalErrorHandler } from "@/components/error/global-error-handler";
 import "./globals.css";
 
 const inter = Inter({
@@ -81,7 +83,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 var html = document.documentElement;
                 if (isDark) html.classList.add("dark"); else html.classList.remove("dark");
                 html.dataset.theme = mode;
-              } catch (e) {}
+              } catch (e) {
+                // Ignore storage/media-query failures; the server-rendered theme remains usable.
+              }
             })();
           `}
         </Script>
@@ -89,7 +93,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="flex min-h-screen flex-col bg-[var(--background)] text-[var(--foreground)] antialiased">
         <FingerprintProvider>
           <AuthBoundary>
-            <Providers>{children}</Providers>
+            <Providers>
+              <GlobalErrorHandler />
+              <MaintenanceBanner />
+              {children}
+            </Providers>
           </AuthBoundary>
         </FingerprintProvider>
       </body>

@@ -111,6 +111,26 @@ describe("ResultScreen", () => {
       url: "http://localhost:3000/challenge/challenge-123/results",
     });
     expect(clipboardWrite).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("Result shared successfully.");
+    });
+  });
+
+  it("shows no confirmation when the user cancels the native share sheet", async () => {
+    const user = userEvent.setup();
+    const share = vi.fn().mockRejectedValue(new DOMException("Share cancelled.", "AbortError"));
+
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: share,
+    });
+
+    render(<ResultScreen totalScore={1500} challengeId="challenge-123" />);
+
+    await user.click(screen.getByRole("button", { name: "Share Result" }));
+
+    expect(share).toHaveBeenCalled();
+    expect(clipboardWrite).not.toHaveBeenCalled();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 

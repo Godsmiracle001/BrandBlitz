@@ -11,8 +11,10 @@ MinIO in production serves over HTTPS using a TLS certificate mounted at `/certs
 1. **Generate the certificate** on the host that runs the MinIO container:
 
    ```bash
-   sudo bash scripts/generate-minio-certs.sh /etc/minio/certs
+   pnpm minio:certs /etc/minio/certs
    ```
+
+   (The `minio:certs` alias wraps `bash scripts/generate-minio-certs.sh` — see the root `package.json`.)
 
    For production, replace the self-signed cert with one issued by your CA or Let's Encrypt (see [Obtain a CA-signed certificate](#obtain-a-ca-signed-certificate) below).
 
@@ -52,7 +54,7 @@ Rotate before the certificate expiry date (check with `openssl x509 -in /etc/min
 2. **Generate a new certificate** (or obtain one from your CA):
 
    ```bash
-   sudo bash scripts/generate-minio-certs.sh /etc/minio/certs
+   pnpm minio:certs /etc/minio/certs
    ```
 
 3. **Reload MinIO** — it picks up new certs on restart:
@@ -99,7 +101,7 @@ Then restart MinIO as in step 3 above.
 ## Environment Variables
 
 | Variable | Default (prod) | Description |
-|---|---|---|
+| --- | --- | --- |
 | `S3_ENDPOINT` | `https://minio:9000` | Must use `https://` in production |
 | `MINIO_OPTS` | `--certs-dir /certs` | Passed to the MinIO server command |
 

@@ -9,6 +9,8 @@ import {
 import { revokeAllUserRefreshTokens } from "../../lib/tokens";
 import type { GdprErasureJobData } from "../gdpr-erasure.queue";
 
+const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds
+
 export const gdprErasureWorkerOptions = {
   connection: redis,
   concurrency: 1,
@@ -60,5 +62,39 @@ export function createGdprErasureWorker(WorkerImpl: typeof Worker = Worker): Wor
     });
   });
 
+  setupGracefulShutdown(worker, "gdpr-erasure");
+
   return worker;
+}
+
+function setupGracefulShutdown(worker: Worker, workerName: string): void {
+  let isShuttingDown = false;
+
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    logger.info(`${signal} received, gracefully shutting down ${workerName} worker...`);
+
+    const shutdownTimer = setTimeout(() => {
+      logger.warn(`${workerName} worker shutdown timeout exceeded, forcing exit`);
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+
+    try {
+      await worker.close();
+      clearTimeout(shutdownTimer);
+      logger.info(`${workerName} worker closed gracefully`);
+      process.exit(0);
+    } catch (error) {
+      clearTimeout(shutdownTimer);
+      logger.error(`Error during ${workerName} worker shutdown`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      process.exit(1);
+    }
+  };
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }

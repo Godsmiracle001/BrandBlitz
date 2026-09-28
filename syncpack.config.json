@@ -1,0 +1,44 @@
+{
+  "$schema": "https://unpkg.com/syncpack@15.3.3/dist/schema.json",
+  "dependencyTypes": ["dev", "prod", "peer"],
+  "versionGroups": [
+    {
+      "label": "Align shared toolchain dependencies across all workspaces",
+      "packages": ["**"],
+      "dependencies": [
+        "typescript",
+        "vitest",
+        "tsup",
+        "@vitest/coverage-v8",
+        "zod",
+        "@types/node"
+      ],
+      "pinVersion": "auto"
+    },
+    {
+      "label": "Align shared React / testing-library dependencies across all workspaces",
+      "packages": ["**"],
+      "dependencies": [
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom",
+        "@testing-library/react",
+        "@testing-library/dom",
+        "@testing-library/jest-dom",
+        "@testing-library/user-event"
+      ],
+      "pinVersion": "auto"
+    },
+    {
+      "label": "Align shared Radix UI dependencies across all workspaces",
+      "packages": ["**"],
+      "dependencies": [
+        "@radix-ui/react-dialog",
+        "@radix-ui/react-progress",
+        "@radix-ui/react-slot"
+      ],
+      "pinVersion": "auto"
+    }
+  ]
+}

@@ -1,7 +1,8 @@
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { defineProject } from "vitest/config";
-import react from '@vitejs/plugin-react';
+import react from "@vitejs/plugin-react";
+import { sharedCoverageOptions } from "../../packages/config/src/vitest-base";
 
 const projectRoot = path.dirname(fileURLToPath(import.meta.url));
 
@@ -20,7 +21,7 @@ export default defineProject({
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     coverage: {
-      provider: "v8",
+      ...sharedCoverageOptions,
       include: [
         "src/components/brand/brand-kit-form.tsx",
         "src/components/brand/upload-field.tsx",

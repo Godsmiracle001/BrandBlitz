@@ -8,16 +8,17 @@ import {
   getFraudFlagById,
   updateFraudFlagStatus,
 } from "../../db/queries/fraud-flags";
+import { CursorQuerySchema } from "../../db/pagination";
 
 const router = Router();
 
 router.use(authenticate);
 router.use(requireAdmin);
 
-const ListQuerySchema = z.object({
+const ListQuerySchema = CursorQuerySchema.extend({
   status: z.enum(["open", "resolved", "escalated"]).optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+}).refine((data) => !("page" in data), {
+  message: "Use ?cursor for pagination. Legacy ?page parameter is no longer supported.",
 });
 
 const PatchBodySchema = z.object({
@@ -27,11 +28,12 @@ const PatchBodySchema = z.object({
 
 /**
  * GET /admin/fraud-flags
- * Paginated list of fraud flags. Optional ?status= filter.
+ * Paginated list of fraud flags. Supports keyset cursor pagination via ?cursor.
+ * Optional ?status= filter.
  */
 router.get("/", async (req, res) => {
-  const { status, page, pageSize } = ListQuerySchema.parse(req.query);
-  const { flags, total } = await getFraudFlags({ status, page, pageSize });
+  const { status, cursor, limit: pageSize } = ListQuerySchema.parse(req.query);
+  const { flags, nextCursor } = await getFraudFlags({ status, cursor, pageSize });
 
   res.json({
     flags: flags.map((f) => ({
@@ -57,10 +59,8 @@ router.get("/", async (req, res) => {
       deviceId: f.device_id,
     })),
     pagination: {
-      page,
       pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
+      nextCursor,
     },
   });
 });

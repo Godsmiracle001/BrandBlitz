@@ -92,6 +92,11 @@ export async function getCurrentLeagueGroup(
       WHERE gs.status = 'completed'
         AND gs.completed_at >= w.start_date
         AND gs.completed_at < w.end_date
+        AND gs.user_id IN (
+          SELECT member.user_id
+          FROM league_assignments member
+          WHERE member.week_start = $1 AND member.league = $2 AND member.group_id = $3
+        )
       GROUP BY gs.user_id
     ),
     scoped AS (

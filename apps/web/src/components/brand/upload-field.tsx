@@ -92,9 +92,7 @@ export async function validateMagicBytes(file: File): Promise<boolean> {
   const buffer = await slice.arrayBuffer();
   const bytes = new Uint8Array(buffer);
 
-  return signatures.some((sig) =>
-    sig.bytes.every((b, i) => bytes[sig.offset + i] === b)
-  );
+  return signatures.some((sig) => sig.bytes.every((b, i) => bytes[sig.offset + i] === b));
 }
 
 // ── MIME helper ───────────────────────────────────────────────────────────────
@@ -130,6 +128,50 @@ async function verifyWithRetry(
   }
 }
 
+/** Upload with native byte progress when supported, falling back to fetch. */
+export async function putWithProgress(
+  uploadUrl: string,
+  file: File,
+  onProgress: (percent: number | null) => void
+): Promise<void> {
+  if (typeof XMLHttpRequest === "undefined") {
+    onProgress(null);
+    const response = await fetch(uploadUrl, {
+      method: "PUT",
+      body: file,
+      headers: { "Content-Type": file.type },
+    });
+    if (!response.ok) {
+      throw new Error(response.status === 403 ? "upload-expired" : "upload-rejected");
+    }
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("PUT", uploadUrl);
+    request.setRequestHeader("Content-Type", file.type);
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable || event.total === 0) {
+        onProgress(null);
+        return;
+      }
+      onProgress(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+    };
+    request.onerror = () => reject(new Error("upload-rejected"));
+    request.onabort = () => reject(new Error("upload-rejected"));
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress(100);
+        resolve();
+      } else {
+        reject(new Error(request.status === 403 ? "upload-expired" : "upload-rejected"));
+      }
+    };
+    request.send(file);
+  });
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface UploadFieldProps {
@@ -163,6 +205,7 @@ export function UploadField({
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -197,6 +240,7 @@ export function UploadField({
     }
 
     setUploading(true);
+    setUploadProgress(null);
     setPendingFile(file);
 
     let presignedKey: string | null = null;
@@ -214,20 +258,7 @@ export function UploadField({
       const { uploadUrl, key, publicUrl } = presignRes.data;
 
       // 5. Upload directly to S3/MinIO
-      const putRes = await fetch(uploadUrl, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type },
-      });
-
-      // Explicitly surface any non-2xx S3 response. A 403 here almost always
-      // means the presigned URL has expired (its TTL elapsed before the PUT) —
-      // give the user an actionable message instead of failing silently.
-      if (!putRes.ok) {
-        throw new Error(
-          putRes.status === 403 ? "upload-expired" : "upload-rejected",
-        );
-      }
+      await putWithProgress(uploadUrl, file, setUploadProgress);
 
       presignedKey = key;
 
@@ -236,9 +267,7 @@ export function UploadField({
         await verifyWithRetry(api, key);
       } catch {
         // File made it to S3 but verify never confirmed — delete the orphan
-        await api
-          .delete("/upload/abort", { data: { key } })
-          .catch(() => {});
+        await api.delete("/upload/abort", { data: { key } }).catch(() => {});
         throw new Error("verify-failed");
       }
 
@@ -251,12 +280,10 @@ export function UploadField({
       let message: string;
       switch (code) {
         case "verify-failed":
-          message =
-            "Upload could not be confirmed. The file has been removed. Please try again.";
+          message = "Upload could not be confirmed. The file has been removed. Please try again.";
           break;
         case "upload-expired":
-          message =
-            "Upload link expired before the file finished uploading. Please try again.";
+          message = "Upload link expired before the file finished uploading. Please try again.";
           break;
         case "upload-rejected":
           message = "Storage rejected the upload. Please try again.";
@@ -268,6 +295,7 @@ export function UploadField({
       void presignedKey;
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -330,22 +358,39 @@ export function UploadField({
           }}
           disabled={uploading}
           className={cn(
-            "w-full border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]",
+            "w-full cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-60",
             isDragging
-              ? "border-[var(--primary)] bg-[var(--muted)]/50"
-              : "border-[var(--border)] hover:border-[var(--primary)] hover:bg-[var(--muted)]/50"
+              ? "bg-[var(--muted)]/50 border-[var(--primary)]"
+              : "hover:bg-[var(--muted)]/50 border-[var(--border)] hover:border-[var(--primary)]"
           )}
         >
           {isDragging ? (
             <p className="text-sm font-medium text-[var(--primary)]">Drop here</p>
           ) : uploading ? (
-            <p className="text-sm text-[var(--muted-foreground)]">Uploading...</p>
+            <div className="space-y-2" aria-live="polite">
+              <p className="text-sm text-[var(--muted-foreground)]">
+                {uploadProgress === null ? "Uploading..." : `Uploading ${uploadProgress}%`}
+              </p>
+              {uploadProgress !== null ? (
+                <div
+                  role="progressbar"
+                  aria-label={`${label} upload progress`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={uploadProgress}
+                  className="mx-auto h-2 w-full max-w-xs overflow-hidden rounded-full bg-[var(--muted)]"
+                >
+                  <div
+                    className="h-full bg-[var(--primary)] transition-[width]"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              ) : null}
+            </div>
           ) : (
             <>
               <p className="text-sm font-medium">{label}</p>
-              <p className="text-xs text-[var(--muted-foreground)] mt-1">
-                {typeConfig.label}
-              </p>
+              <p className="mt-1 text-xs text-[var(--muted-foreground)]">{typeConfig.label}</p>
             </>
           )}
         </button>
@@ -357,11 +402,7 @@ export function UploadField({
             {error}
           </p>
           {pendingFile && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => handleFile(pendingFile)}
-            >
+            <Button variant="ghost" size="sm" onClick={() => handleFile(pendingFile)}>
               Retry
             </Button>
           )}

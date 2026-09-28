@@ -3,12 +3,41 @@ import { z } from "zod";
 import { getActiveChallenges } from "../db/queries/challenges";
 import {
   getLeaderboard,
+  getLeaderboardForCsvExport,
   getTopSessionsPerChallenge,
   getGlobalLeaderboardFromView,
+  LEADERBOARD_SORTS,
+  type LeaderboardSort,
 } from "../db/queries/sessions";
+import { getReferralNetworkUserIds } from "../db/queries/referrals";
 import { withCoalescing } from "../lib/cache";
+import { CursorQuerySchema } from "../db/pagination";
+import { createError } from "../middleware/error";
+import { optionalAuth } from "../middleware/authenticate";
 
 const router = Router();
+
+const LEADERBOARD_CACHE_TTL_SEC = 30;
+
+// Keep leaderboard ORDER BY clauses static or selected from this allowlist only.
+// User query params must never be concatenated directly into SQL strings.
+const LeaderboardSortSchema = z.enum(LEADERBOARD_SORTS).default("score");
+
+function parseLeaderboardSort(query: unknown): LeaderboardSort {
+  const raw =
+    typeof query === "object" && query !== null
+      ? ((query as Record<string, unknown>).sort_by ?? (query as Record<string, unknown>).order)
+      : undefined;
+  const parsed = LeaderboardSortSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw createError(
+      `Invalid leaderboard sort. Allowed values: ${LEADERBOARD_SORTS.join(", ")}`,
+      400,
+      "INVALID_SORT"
+    );
+  }
+  return parsed.data;
+}
 
 function writeSse(res: any, payload: unknown) {
   res.write(`data: ${JSON.stringify(payload)}\n\n`);
@@ -23,10 +52,13 @@ function writeSse(res: any, payload: unknown) {
  *  - intervalMs?: number (default 2000, min 500)
  */
 router.get("/stream", async (req, res) => {
-  const { challengeId, intervalMs } = z.object({
-    challengeId: z.string().optional(),
-    intervalMs: z.coerce.number().min(500).max(30_000).default(2000),
-  }).parse(req.query);
+  parseLeaderboardSort(req.query);
+  const { challengeId, intervalMs } = z
+    .object({
+      challengeId: z.string().optional(),
+      intervalMs: z.coerce.number().min(500).max(30_000).default(2000),
+    })
+    .parse(req.query);
 
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -35,7 +67,7 @@ router.get("/stream", async (req, res) => {
 
   const sendSnapshot = async () => {
     if (challengeId) {
-      const sessions = await getLeaderboard(challengeId, 100, 0);
+      const { sessions } = await getLeaderboard(challengeId, 100);
       writeSse(res, {
         challengeId,
         sessions: sessions.map((s, i) => ({
@@ -54,7 +86,7 @@ router.get("/stream", async (req, res) => {
       return;
     }
 
-    const challenges = await getActiveChallenges(10);
+    const { challenges } = await getActiveChallenges(10);
     const challengeIds = challenges.map((c) => c.id);
     const topSessions = await getTopSessionsPerChallenge(challengeIds, 10);
 
@@ -102,22 +134,16 @@ router.get("/stream", async (req, res) => {
  * Single aggregated query via ROW_NUMBER() — no N+1.
  */
 router.get("/global", async (req, res) => {
-  const { limit, cursor } = z.object({
-    limit: z.coerce.number().min(1).max(100).default(50),
-    cursor: z.string().optional(),
-  }).parse(req.query);
+  const sortBy = parseLeaderboardSort(req.query);
+  const { limit } = CursorQuerySchema.parse(req.query);
 
-  const cacheKey = cursor
-    ? `leaderboard:global:${cursor}:${limit}`
-    : `leaderboard:global:first:${limit}`;
-
-  const response = await withCoalescing(cacheKey, 300, async () => {
-    const challenges = await getActiveChallenges(10);
+  const response = await withCoalescing(`leaderboard:global:${sortBy}:${limit}`, 300, async () => {
+    const { challenges } = await getActiveChallenges(10);
     const challengeIds = challenges.map((c) => c.id);
 
     const viewRows = await getGlobalLeaderboardFromView(challengeIds, 10);
 
-    const allSessions = viewRows.map((s) => ({
+    const data = viewRows.map((s) => ({
       rank: s.rank,
       challengeId: s.challenge_id,
       userId: s.user_id,
@@ -129,20 +155,9 @@ router.get("/global", async (req, res) => {
       totalEarned: s.total_earned_usdc,
     }));
 
-    // Apply cursor filter
-    let startIndex = 0;
-    if (cursor) {
-      const cursorIndex = allSessions.findIndex((s) => s.rank > Number(cursor));
-      startIndex = cursorIndex >= 0 ? cursorIndex : allSessions.length;
-    }
-
-    const page = allSessions.slice(startIndex, startIndex + limit);
-    const hasMore = startIndex + limit < allSessions.length;
-    const nextCursor = page.length > 0 ? String(page[page.length - 1].rank) : null;
-
     return {
-      data: page,
-      nextCursor: hasMore ? nextCursor : null,
+      data,
+      nextCursor: null,
       cachedAt: new Date().toISOString(),
     };
   });
@@ -150,44 +165,104 @@ router.get("/global", async (req, res) => {
   res.json(response);
 });
 
+function escapeCsv(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return '""';
+  const str = String(val);
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
+ * GET /leaderboard/:challengeId/export.csv
+ * Export challenge leaderboard standings as CSV stream.
+ */
+router.get("/:challengeId/export.csv", optionalAuth, async (req, res, next) => {
+  try {
+    const { challengeId } = req.params;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="leaderboard-${challengeId}.csv"`);
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+
+    res.write("rank,username,score,payout_amount_usdc\n");
+
+    const batchSize = 500;
+    let cursor: string | undefined = undefined;
+    let rankCounter = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const result = await getLeaderboardForCsvExport(challengeId, batchSize, cursor);
+      if (!result.sessions || result.sessions.length === 0) {
+        break;
+      }
+
+      for (const s of result.sessions) {
+        const rank = rankCounter++;
+        const username = escapeCsv(s.username || s.display_name || "Anonymous");
+        const score = s.total_score;
+        const payout = escapeCsv(s.payout_amount_usdc || "0");
+
+        res.write(`${rank},${username},${score},${payout}\n`);
+      }
+
+      if (!result.nextCursor || result.sessions.length < batchSize) {
+        hasMore = false;
+      } else {
+        cursor = result.nextCursor;
+      }
+    }
+
+    res.end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 /**
  * GET /leaderboard/:challengeId
+ * Paginated leaderboard for a challenge. Supports keyset cursor pagination.
+ *
+ * Query params:
+ *  - scope: "global" (default) | "friends" — filter to referral network
  */
-router.get("/:challengeId", async (req, res) => {
-  const { limit, cursor } = z.object({
-    limit: z.coerce.number().default(20),
-    cursor: z.string().optional(),
-  }).parse(req.query);
+router.get("/:challengeId", optionalAuth, async (req, res) => {
+  const sortBy = parseLeaderboardSort(req.query);
+  const { limit, cursor, offset } = CursorQuerySchema.parse(req.query);
+  const scopeRaw = typeof req.query.scope === "string" ? req.query.scope : undefined;
+  const scope = scopeRaw === "friends" ? "friends" : "global";
+  const userId = req.user?.sub;
 
-  // cursor is last seen total_score,encoded as just the score value
-  // We fetch limit+1 to detect if there are more
-  let cursorScore: number | undefined;
-  let cursorId: string | undefined;
-  if (cursor) {
-    const parts = cursor.split(":");
-    cursorScore = Number(parts[0]);
-    cursorId = parts[1];
-  }
-
-  const sessions = await getLeaderboard(req.params.challengeId, limit + 1, 0);
-
-  // Apply cursor filter on the result set
-  let filtered = sessions;
-  if (cursorScore !== undefined && cursorId !== undefined) {
-    filtered = sessions.filter(s =>
-      s.total_score < cursorScore ||
-      (s.total_score === cursorScore && s.id > cursorId)
+  if (offset !== undefined) {
+    res.setHeader("Deprecation", "offset");
+    res.setHeader(
+      "Link",
+      '<https://docs.api.brandblitz.com/pagination>; rel="deprecation"; type="text/html"'
     );
   }
 
-  const hasMore = filtered.length > limit;
-  const page = filtered.slice(0, limit);
+  const friendUserIds: string[] = [];
+  if (scope === "friends" && userId) {
+    const ids = await getReferralNetworkUserIds(userId);
+    friendUserIds.push(...ids);
+  }
 
-  const lastItem = page[page.length - 1];
-  const nextCursor = lastItem ? `${lastItem.total_score}:${lastItem.id}` : null;
+  const scopeKey = scope === "friends" ? `friends:${userId ?? "anon"}` : "global";
+  const cacheKey = `leaderboard:${sortBy}:${req.params.challengeId}:${limit}:${cursor ?? ""}:${scopeKey}`;
 
-  res.json({
-    data: page.map((s, i) => ({
+  const responseBody = await withCoalescing(cacheKey, LEADERBOARD_CACHE_TTL_SEC, async () => {
+    const scopeFriendIds = scope === "friends" ? friendUserIds : undefined;
+    const result = await getLeaderboard(
+      req.params.challengeId,
+      limit,
+      cursor,
+      sortBy,
+      scopeFriendIds
+    );
+
+    const mappedSessions = result.sessions.map((s, i) => ({
       rank: i + 1,
       userId: s.user_id,
       username: s.username,
@@ -196,10 +271,17 @@ router.get("/:challengeId", async (req, res) => {
       avatarUrl: s.avatar_url,
       totalScore: s.total_score,
       totalEarned: s.total_earned_usdc,
-      endedAt: s.completed_at,
-    })),
-    nextCursor: hasMore ? nextCursor : null,
+    }));
+
+    return {
+      sessions: mappedSessions,
+      data: mappedSessions,
+      nextCursor: result.nextCursor,
+      scope,
+    };
   });
+
+  res.json(responseBody);
 });
 
 export default router;

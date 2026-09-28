@@ -8,13 +8,13 @@ import { usePathname } from "next/navigation";
 import { createApiClient } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "./theme-toggle";
+import { NotificationBell } from "./notification-bell";
 
 export function Header() {
   const { data: session, status } = useSession();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const [streak, setStreak] = useState<number | null>(null);
-  const [toastMessage, setToastMessage] = useState<string>("");
 
   const apiToken = useMemo(() => (session as any)?.apiToken as string | undefined, [session]);
 
@@ -56,10 +56,6 @@ export function Header() {
     void api.get("/users/me/streak").then((response) => {
       const data = response.data;
       setStreak(data.streak ?? null);
-      if (data.milestoneJustHit) {
-        setToastMessage(`🔥 Streak milestone reached: ${data.streak} days!`);
-        window.setTimeout(() => setToastMessage(""), 5000);
-      }
     });
   }, [apiToken]);
 
@@ -103,6 +99,7 @@ export function Header() {
 
         <div className="flex items-center gap-3">
           <ThemeToggle />
+          {apiToken && <NotificationBell apiToken={apiToken} />}
 
           {/* Hamburger — mobile only */}
           <button
@@ -143,12 +140,6 @@ export function Header() {
           )}
         </div>
       </div>
-
-      {toastMessage ? (
-        <div className="fixed right-4 top-20 z-50 rounded-2xl border border-[var(--border)] bg-[var(--background)] px-4 py-3 text-sm shadow-lg">
-          {toastMessage}
-        </div>
-      ) : null}
 
       {/* Mobile menu */}
       {menuOpen && (

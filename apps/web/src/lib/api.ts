@@ -143,7 +143,7 @@ export interface ChallengeQuestion {
   option_b: string;
   option_c: string;
   option_d: string;
-  // correct_option and correct_answer are NOT returned by the API
+  // correct_option is NOT returned by the API
 }
 
 export interface LeaderboardEntry {
@@ -184,6 +184,8 @@ export interface UserProfile {
   avatarUrl: string | null;
   streak?: number;
   bestScore?: number;
+  createdAt?: string;
+  isOwner?: boolean;
   recentSessions?: Array<{
     id: string;
     brandName: string;

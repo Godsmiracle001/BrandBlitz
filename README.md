@@ -20,6 +20,8 @@
 - [Prerequisites](#prerequisites)
 - [Quick Start (Docker)](#quick-start-docker)
 - [Quick Start (Local)](#quick-start-local)
+- [Codespaces](#codespaces)
+- [Docker Compose Files](#docker-compose-files)
 - [Running Tests](#running-tests)
 - [Environment Variables](#environment-variables)
 - [Services & Ports](#services--ports)
@@ -119,8 +121,10 @@ After a challenge ends, brands get real data on **attention quality** — not va
 - Warm-up completion rate (% who stayed the full 20s+)
 - Challenge completion rate (% who finished all 3 rounds)
 - Round-by-round accuracy (which brand messages actually landed)
-- Score distribution histogram (were the messages clear or confusing?)
+- Score distribution histogram (were the messages clear or confusing)
 - Cost per verified attention session = pool ÷ completions
+
+See the [Brands API](docs/api/brands.md) for the full endpoint reference including dashboard, analytics, challenge creation, and question review workflows.
 
 ### Cost comparison
 
@@ -157,10 +161,12 @@ BrandBlitz is the only attention platform where the user actually gets better ov
 
 ### Status and on-chain credentials
 
-- Public global leaderboard rank
-- Weekly league tiers: Bronze → Silver → Gold (resets weekly — fresh start for everyone)
-- Challenge streaks and achievement badges
+- Public global leaderboard rank — see [Leaderboard API](docs/api/leaderboard.md) for the full endpoint reference and live SSE stream
+- Weekly league tiers: Bronze → Silver → Gold (resets weekly — fresh start for everyone) — see [Leagues API](docs/api/leagues.md)
+- Challenge streaks and achievement badges — see [Badges API](docs/api/badges.md) for the badge catalog and earning criteria
 - Non-transferable Stellar SBT credentials for tier milestones (verifiable on-chain proof of performance, embeddable in portfolio/LinkedIn)
+
+See the [Users API](docs/api/users.md) for profile, wallet, phone verification, notifications, earnings, referrals, and badge endpoints.
 
 ### Brand perks for top performers
 
@@ -180,6 +186,8 @@ Top scorers earn exclusive access: brand Discord roles, early product access, in
 | **BrandBlitz** | **Warm-up + challenge** | **USDC instant** | **Yes — core mechanic** | **Yes — core mechanic** |
 
 The combination of warm-up → competition → instant USDC payout is unoccupied.
+
+> **How scoring works:** every round awards 100 base points plus a 0–50 speed bonus, and ties break by earliest finish. Full formula, worked examples, and payout math in [docs/guides/scoring-explained.md](docs/guides/scoring-explained.md).
 
 HQ Trivia proved the model: Warner Bros., Nike, and GM paid for branded challenge rounds in 2018. Warner Bros. alone paid ~$3M for three film promotions. Users engaged. Sponsors reported "strong impact on sales, not just engagement." BrandBlitz is HQ Trivia with USDC payouts, Stellar settlement, and a micro-learning warm-up that fixes the one documented weakness of gamified ads (cognitive recall drops without a learning component).
 
@@ -212,6 +220,16 @@ BrandBlitz is open-source infrastructure for skill-validated brand attention on 
 - Embedded wallet onboarding (no seed phrase, 30-second signup)
 
 All patterns are documented, tested, and running in Docker.
+
+### Public Brand Catalog API
+
+Third parties (e.g. Drips / Stellar ecosystem partners) can query the public brand listing without authentication:
+
+```bash
+curl https://api.brandblitz.io/brands/public
+```
+
+See [docs/api/public-brands.md](docs/api/public-brands.md) for the full response schema and usage.
 
 ---
 
@@ -265,6 +283,8 @@ brandblitz/
 └── .env.example      All required environment variables with documentation
 ```
 
+> **Workspace dependency graph:** see [`docs/architecture/workspace-graph.md`](./docs/architecture/workspace-graph.md) for which apps depend on which `packages/*` (verified against `package.json` `@brandblitz/*` deps) — e.g. `packages/stellar` changes affect `apps/api` and `apps/deposit-monitor`.
+
 ---
 
 ## Tech Stack
@@ -294,6 +314,7 @@ brandblitz/
 - **Rust** + Stellar CLI (smart contract work only)
   - `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
   - `cargo install --locked stellar-cli@25 --features opt`
+- **Go** (only needed for `pnpm docs:db`) — [install instructions](https://go.dev/doc/install)
 
 ---
 
@@ -327,13 +348,87 @@ open http://localhost:9001         # MinIO console (brandblitz / brandblitz123)
 
 ```bash
 # Infrastructure in Docker, apps native
-docker compose up postgres redis minio minio-setup
+docker compose --profile infra up
 
 pnpm install
 cp .env.example .env  # update DATABASE_URL, REDIS_URL to localhost
 
 pnpm dev  # Turborepo runs all packages in parallel
 ```
+
+Tip: `make dev` wraps the infra + migrate + `pnpm dev` sequence above — see [Workspace Scripts](#workspace-scripts) for the other `make` targets.
+
+### Seed fixtures
+
+Starting from an empty database makes it hard to exercise any game flow, so seed deterministic fixtures first:
+
+```bash
+# Idempotent default — inserts only the missing fixture rows; safe to re-run
+pnpm --filter @brandblitz/api seed
+
+# --reset — first truncates every seed-* fixture row (users, brands, challenges,
+# sessions, round scores, fraud flags, payouts), then re-seeds from scratch
+pnpm --filter @brandblitz/api seed -- --reset
+```
+
+The default run never deletes existing data; `--reset` wipes the seed-owned rows listed above (it leaves non-seed data alone) before re-inserting. The exact truncation list and fixture definitions live in [`apps/api/scripts/seed.ts`](./apps/api/scripts/seed.ts).
+
+If you enable TLS for MinIO locally, generate the self-signed cert before starting the stack:
+
+```bash
+pnpm minio:certs
+```
+
+See [`docs/runbooks/rotate-minio-certs.md`](./docs/runbooks/rotate-minio-certs.md) for details.
+
+---
+
+## Codespaces
+
+A one-click environment for GitHub Codespaces and VS Code Dev Containers lives in [`.devcontainer/devcontainer.json`](./.devcontainer/devcontainer.json).
+
+Opening the repository in a Codespace (or running **Dev Containers: Reopen in Container** in VS Code) will:
+
+- Boot a Node.js 22 image and install **pnpm 10.33.0** — the version pinned by the root `packageManager` field
+- Forward the dev ports: **3000** (web), **3001** (api), **5432** (Postgres), **6379** (Redis), **9000** (MinIO)
+- Run `docker compose up -d postgres redis minio minio-setup` via `postCreateCommand`, so the infrastructure containers are up when the dev container finishes creating
+
+Then finish setup inside the container:
+
+```bash
+cp .env.example .env                          # fill in the required secrets
+pnpm --filter @brandblitz/api migrate         # apply migrations
+pnpm --filter @brandblitz/api seed            # load fixtures (add -- --reset to wipe first)
+pnpm dev                                      # or: make dev
+```
+
+---
+
+## Docker Compose Files
+
+The project uses three Compose files for different environments:
+
+| File | Purpose | When applied |
+|------|---------|--------------|
+| `docker-compose.yml` | Base configuration — all services, health checks, and volumes | Always loaded |
+| `docker-compose.override.yml` | Development overrides — hot-reload bind mounts, exposed ports | **Auto-loaded** by `docker compose up` |
+| `docker-compose.prod.yml` | Production overrides — no bind mounts, HTTPS, replicas, secrets | Explicitly with `-f` flag |
+
+**Development** (default):
+```bash
+docker compose up
+# Automatically merges docker-compose.yml + docker-compose.override.yml
+# Override adds: bind mounts for hot-reload, direct port access (3000, 3001, 5432, etc.)
+```
+
+**Production:**
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Skips the override file — uses prod config only
+# Adds: HTTPS, replicas, resource limits, secrets, restart policies
+```
+
+The override file is **not loaded** when you specify explicit `-f` files. This means production never picks up the dev bind mounts or exposed ports.
 
 ---
 
@@ -379,27 +474,75 @@ SEED_DEV=1 docker compose up
 
 Set `SEED_DEV=1` in your shell or `.env` and the API container will run the seed script before starting. This is a no-op if fixtures already exist.
 
+**Reset the local database and re-seed from scratch:**
+
+```bash
+pnpm db:reset                 # drop all data, reapply migrations
+pnpm db:reset -- --seed       # ...and re-seed fixtures
+```
+
+See [`apps/api/README.md`](./apps/api/README.md#operational-scripts) for other dev CLI helpers (e.g. `admin:grant` to promote a user to admin).
+
 ---
 
 ## Environment Variables
 
-See [`.env.example`](./.env.example) for all variables with inline documentation. Minimum to get running:
+Kept in sync with [`.env.example`](./.env.example), the source of truth (inline comments there have the full rationale/rotation notes). Vars marked **Critical secret** must never be committed with real values.
 
-| Variable | Description |
-|---|---|
-| `DATABASE_URL` | PostgreSQL connection string |
-| `REDIS_URL` | Redis connection string |
-| `JWT_SECRET` | Sign API JWTs (64+ chars in prod) |
-| `NEXTAUTH_SECRET` | next-auth session encryption |
-| `NEXTAUTH_URL` | Public URL of the web app |
-| `GOOGLE_CLIENT_ID/SECRET` | Google OAuth credentials |
-| `STELLAR_HOT_WALLET_SECRET` | Stellar keypair for payouts |
-| `STELLAR_NETWORK` | `testnet` or `public` |
-| `S3_*` | Storage endpoint, credentials, bucket (`S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`) |
-| `WEBHOOK_SECRET` | Protects `/webhooks/stellar` |
-| `PHONE_HASH_SALT` | HMAC salt for phone-number hashing (32-byte random) |
-| `SESSION_INTEGRITY_KEY` | HMAC key for session tamper-detection — generate with `openssl rand -hex 32` |
-| `NEXTAUTH_API_URL` | Internal URL next-auth uses to reach the API (e.g. `http://localhost/api`) |
+| Name | Required | Default | Description |
+|---|---|---|---|
+| `PORT` | No | `3001` | API server port |
+| `NODE_ENV` | No | `development` | Node environment |
+| `DATABASE_URL` | Yes | — | PostgreSQL connection string. **Critical secret.** |
+| `REDIS_URL` | No | `redis://localhost:6379` | Redis connection string |
+| `POSTGRES_PASSWORD` | No | `brandblitz_dev` | PostgreSQL superuser password. **Critical secret.** |
+| `SESSION_START_LOCKOUT_THRESHOLD` | No | `10` | Failed session-start attempts before lockout |
+| `SESSION_START_LOCKOUT_WINDOW_SECONDS` | No | `3600` | Lockout window, in seconds |
+| `JWT_SECRET` | Yes | — | Signs API JWTs (32+ chars). **Critical secret.** |
+| `JWT_ISSUER` | No | `brandblitz-api` | JWT issuer claim |
+| `JWT_AUDIENCE` | No | `brandblitz-client` | JWT audience claim |
+| `GOOGLE_CLIENT_ID` | Yes | — | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Yes | — | Google OAuth client secret. **Critical secret.** |
+| `WEB_URL` | No | `http://localhost:3000` | Public URL of the web app |
+| `GOOGLE_REDIRECT_URI` | No | `http://localhost:3000/api/auth/callback/google` | OAuth redirect URI |
+| `GOOGLE_OAUTH_PKCE_TTL_SECONDS` | No | `300` | PKCE code verifier TTL |
+| `REFERRER_POLICY` | No | `strict-origin-when-cross-origin` | `Referrer-Policy` header value |
+| `NEXTAUTH_SECRET` | Yes | — | next-auth session encryption. **Critical secret.** |
+| `NEXTAUTH_URL` | Yes | — | Public URL of the web app (next-auth) |
+| `NEXT_PUBLIC_API_URL` | Yes | — | Browser-facing API base URL |
+| `NEXTAUTH_API_URL` | Yes | — | Internal URL next-auth uses to reach the API (e.g. `http://api:3001`) |
+| `NEXT_PUBLIC_CDN_HOST` | No | — | CDN host for the CSP `img-src` directive |
+| `CDN_BASE_URL` | No | — | CDN base URL, overrides `S3_PUBLIC_URL` when set |
+| `NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY` | No | — | FingerprintJS Pro public key; fingerprinting disabled if unset |
+| `ALLOWED_ORIGINS` | Yes | — | Comma-separated CORS allow-list; API refuses to boot without it |
+| `STELLAR_NETWORK` | No | `testnet` | `testnet` or `public` |
+| `STELLAR_HORIZON_URL` | No | `https://horizon-testnet.stellar.org` | Horizon server URL |
+| `STELLAR_RPC_URL` | No | `https://soroban-testnet.stellar.org` | Soroban RPC URL |
+| `STELLAR_HOT_WALLET_SECRET` | Yes | — | Hot wallet secret key (`S...`) used for payouts. **Critical secret.** |
+| `HOT_WALLET_PUBLIC_KEY` | Yes | — | Hot wallet public key (`G...`) used for deposit detection |
+| `SOROBAN_CONTRACT_ID` | No | — | Escrow contract ID; falls back to direct transfers if unset |
+| `USDC_ISSUER` | No | testnet USDC issuer | USDC asset issuer account |
+| `WEBHOOK_SECRET` | Yes | — | Authenticates `/webhooks/stellar` and revalidation calls. **Critical secret.** |
+| `S3_ENDPOINT` | Yes | — | S3-compatible storage endpoint |
+| `S3_REGION` | No | `us-east-1` | Storage region |
+| `S3_ACCESS_KEY_ID` | Yes | — | Storage access key. **Critical secret.** |
+| `S3_SECRET_ACCESS_KEY` | Yes | — | Storage secret key. **Critical secret.** |
+| `S3_BUCKET` | No | `brandblitz-assets` | Default bucket name |
+| `S3_BUCKET_BRAND_ASSETS` | No | `brand-assets` | Brand asset uploads bucket |
+| `S3_BUCKET_SHARE_CARDS` | No | `share-cards` | Share-card renders bucket |
+| `S3_PUBLIC_URL` | No | — | Public URL prefix for stored objects |
+| `S3_FORCE_PATH_STYLE` | No | `true` | Path-style addressing (required for MinIO) |
+| `MINIO_ROOT_USER` | No | `minioadmin` | MinIO root user (docker-compose only) |
+| `MINIO_ROOT_PASSWORD` | No | `minioadmin` | MinIO root password. **Critical secret.** |
+| `TWILIO_ACCOUNT_SID` | No | — | Twilio account SID for phone verification |
+| `TWILIO_AUTH_TOKEN` | No | — | Twilio auth token. **Critical secret.** |
+| `TWILIO_VERIFY_SERVICE_SID` | No | — | Twilio Verify service SID |
+| `PHONE_HASH_SALT` | Yes | — | HMAC salt for phone-number hashing (32-byte random). **Critical secret.** |
+| `SESSION_INTEGRITY_KEY` | Yes | — | HMAC key for session tamper-detection — generate with `openssl rand -hex 32`. **Critical secret.** |
+| `ADMIN_BOOTSTRAP_EMAIL` | No | — | Grants admin role to this email on boot, if set |
+| `REVALIDATE_SECRET` | No | — | Shared secret for on-demand ISR revalidation |
+| `NEXT_REVALIDATE_URL` | No | `http://localhost:3000` | Web app URL used for revalidation calls |
+| `LOG_LEVEL` | No | `info` | `error` \| `warn` \| `info` \| `http` \| `verbose` \| `debug` \| `silly` |
 
 ---
 
@@ -427,6 +570,21 @@ The Playwright suite lives in [`e2e/`](./e2e) and targets the live Docker dev st
 ```bash
 docker compose up -d --build
 pnpm e2e
+```
+
+### Running a single spec
+
+Iterating on one flaky test doesn't require running the whole suite — pass the spec path as an extra argument:
+
+```bash
+pnpm e2e e2e/tests/login-popup-blocked.spec.ts
+```
+
+Any Playwright flags work alongside the filter:
+
+```bash
+pnpm e2e e2e/tests/login-popup-blocked.spec.ts --headed   # watch the browser while it runs
+pnpm e2e e2e/tests/login-popup-blocked.spec.ts --debug    # open the Playwright Inspector / debugger
 ```
 
 What it covers:
@@ -478,6 +636,8 @@ Single hot wallet + muxed accounts. No per-user Stellar accounts (no 2 XLM minim
 ### Soroban Escrow (on-chain alternative)
 For brands wanting full on-chain transparency, the escrow contract holds USDC trustlessly. `settle(recipients)` distributes to winners; `refund()` returns the pool to the brand. See [`contracts/README.md`](./contracts/README.md).
 
+To build the contract, deploy it to testnet, and set `SOROBAN_CONTRACT_ID` so payout code runs through the contract locally, follow [`docs/stellar/local-escrow-setup.md`](./docs/stellar/local-escrow-setup.md). If `SOROBAN_CONTRACT_ID` is unset, payouts fall back to direct hot-wallet transfers.
+
 ---
 
 ## Anti-Cheat
@@ -505,6 +665,8 @@ Payout share:  userScore / sumOfAllWinnerScores × prizePool
 ```
 
 Only users with at least one correct answer receive a payout share.
+
+See [docs/guides/scoring-explained.md](docs/guides/scoring-explained.md) for the exact formula, tie-breaking rules, and worked examples.
 
 ---
 
@@ -625,6 +787,24 @@ pnpm format       # Prettier format all .ts/.tsx/.json files
 pnpm clean        # Remove all build artifacts and node_modules
 ```
 
+### Makefile targets
+
+The repo root [`Makefile`](./Makefile) wraps the most common sequences as short `make` targets — an alternative to the raw `pnpm` / `docker compose` commands above. Each target is commented in the Makefile itself.
+
+| Target | What it runs |
+|---|---|
+| `make dev` | Start infra containers (health-checked), apply migrations via `migrate.ts`, then `pnpm dev` |
+| `make reset-db` | `pnpm db:reset` — drop + recreate the schema and re-apply migrations (`reset-db.ts` → `migrate.ts`) |
+| `make seed` | `pnpm --filter @brandblitz/api seed` — idempotent fixture seed (`seed.ts`); add `SEED_FLAGS="-- --reset"` to truncate first |
+| `make test` | `pnpm test` |
+| `make clean` | `pnpm clean` — build artifacts + `node_modules` |
+
+```bash
+make dev        # infra + migrate + dev servers
+make reset-db   # wipe local DB, then:
+make seed       # re-seed fixtures
+```
+
 ---
 
 ## Packages
@@ -660,7 +840,15 @@ S3-compatible object storage with image optimisation. Imported by `apps/api`. Wo
 - [`apps/web/README.md`](./apps/web/README.md) — Frontend pages, components, auth flow, game state machine, upload flow
 - [`contracts/README.md`](./contracts/README.md) — Soroban escrow contract: build, test, deploy, full function reference
 - [`docs/adr/`](./docs/adr/README.md) — Architecture Decision Records (the "why" behind load-bearing engineering choices)
+- [OpenAPI and Scalar UI guide](./docs/api/using-the-openapi-spec.md) — Browse `/docs`, fetch `/docs/openapi.json`, and generate typed clients from the API spec.
+- [Rate limits and API errors](./docs/api/rate-limits-and-errors.md) — Public reference for limiter buckets, 429 responses, and the common error envelope.
+- [Waitlist curl examples](./docs/examples/waitlist-curl.md) — Runnable signup and position lookup examples for landing-page integrations.
 - Interactive API reference — Scalar UI at `/docs` (local dev: <http://localhost:4000/docs>). Spec lives at [`docs/openapi.yml`](./docs/openapi.yml); regenerate via `pnpm --filter @brandblitz/api gen:openapi`.
+- [Brands API](./docs/api/brands.md) — Brand CRUD, challenge creation, question review, webhooks, analytics
+- [Users API](./docs/api/users.md) — Profiles, wallet, phone verification, notifications, badges, earnings, referrals
+- [Challenges API](./docs/api/challenges.md) — Challenge listing, details, stats, leaderboards, deposit info, reports
+- [Sessions API](./docs/api/sessions.md) — Gameplay flow: warmup, answer submission, session recovery
+- [Implementation Notes](./docs/implementation-notes/README.md) — Index of root-level implementation summary documents
 
 ---
 

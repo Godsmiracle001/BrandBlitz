@@ -7,10 +7,7 @@ import {
 import type { NetworkName } from "@brandblitz/stellar";
 import { EscrowClient, type EscrowRecipient } from "@brandblitz/stellar";
 import { getLeaderboard } from "../db/queries/sessions";
-import {
-  getChallengeById,
-  updateChallengeStatus,
-} from "../db/queries/challenges";
+import { getChallengeById, updateChallengeStatus } from "../db/queries/challenges";
 import { createPayout, updatePayoutStatus } from "../db/queries/payouts";
 import { incrementUserEarnings } from "../db/queries/users";
 import { rankWinners } from "./scoring";
@@ -24,9 +21,34 @@ import { stellarSequenceStore } from "../lib/redis";
 import { verifySessionHmac } from "../lib/integrity";
 import { queueReferralBonusForPayout } from "./referrals";
 import { query } from "../db";
+import { getLicensePayoutTerms } from "../db/queries/challenge-licenses";
 
 // Sentinel included in the PG trigger exception message (migration 018).
 export const FRAUD_BLOCK_SENTINEL = "FRAUD_BLOCKED_PAYOUT";
+
+async function insertPayoutNotification(
+  userId: string,
+  amountUsdc: string,
+  txHash: string | null | undefined,
+  challengeId: string
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO notifications (user_id, type, payload)
+       VALUES ($1, 'payout_received', $2::jsonb)`,
+      [
+        userId,
+        JSON.stringify({
+          amount_usdc: amountUsdc,
+          tx_hash: txHash ?? null,
+          challenge_id: challengeId,
+        }),
+      ]
+    );
+  } catch (err) {
+    logger.warn("Failed to insert payout notification", { userId, err });
+  }
+}
 
 export function isFraudBlockError(err: unknown): boolean {
   return err instanceof Error && err.message.includes(FRAUD_BLOCK_SENTINEL);
@@ -36,7 +58,8 @@ export function isFraudBlockError(err: unknown): boolean {
  * Enqueue a payout job for a completed challenge.
  * The actual Stellar transactions are processed by the BullMQ worker.
  */
-
+export async function enqueuePayout(challengeId: string, requestId?: string): Promise<void> {
+  await enqueuePayoutJob(challengeId);
   await enqueueLeaderboardRefresh(challengeId);
   logger.info("Payout job enqueued", { challengeId, requestId });
 }
@@ -49,7 +72,9 @@ export async function processPayout(challengeId: string): Promise<void> {
   const challenge = await getChallengeById(challengeId);
   if (!challenge) throw new Error(`Challenge ${challengeId} not found`);
   if (challenge.status !== "ended") {
-    logger.warn("Payout skipped - challenge not in ended state", { challengeId });
+    logger.warn("Payout skipped - challenge not in ended state", {
+      challengeId,
+    });
     return;
   }
 
@@ -63,7 +88,7 @@ export async function processPayout(challengeId: string): Promise<void> {
         session.id,
         session.total_score,
         session.completed_at ?? "",
-        session.integrity_hmac,
+        session.integrity_hmac
       )
     ) {
       metrics.inc("antiCheat.integrity_hmac_tampered_total");
@@ -87,7 +112,7 @@ export async function processPayout(challengeId: string): Promise<void> {
       stellarAddress: (s.stellar_address ?? "").trim(),
       totalScore: s.total_score,
       endedAt: s.completed_at ?? s.created_at,
-    })),
+    }))
   );
 
   const eligibleWinners = ranked.filter((winner) => {
@@ -100,6 +125,13 @@ export async function processPayout(challengeId: string): Promise<void> {
   });
 
   const totalPoints = eligibleWinners.reduce((acc, s) => acc + s.totalScore, 0);
+  const licenseTerms = await getLicensePayoutTerms(challengeId);
+  const grossPoolStroops = BigInt(challenge.pool_amount_stroops);
+  const licenseFeeStroops =
+    licenseTerms?.stellar_address && licenseTerms.fee_bps > 0
+      ? (grossPoolStroops * BigInt(licenseTerms.fee_bps)) / 10_000n
+      : 0n;
+  const playerPoolStroops = grossPoolStroops - licenseFeeStroops;
   const recipients: PayoutRecipient[] = [];
   const payoutRecords: {
     id: string;
@@ -108,31 +140,52 @@ export async function processPayout(challengeId: string): Promise<void> {
     amount: string;
     amountStroops: bigint;
   }[] = [];
+  const payoutAllocations = new Map<
+    string,
+    { address: string; userId: string; amountStroops: bigint }
+  >();
 
   for (const winner of eligibleWinners) {
     const amountStroops = calculatePayoutShareStroops(
       winner.totalScore,
       totalPoints,
-      challenge.pool_amount_stroops,
+      playerPoolStroops
     );
 
     if (amountStroops < 1n) {
       continue;
     }
 
+    payoutAllocations.set(winner.userId, {
+      address: winner.stellarAddress,
+      userId: winner.userId,
+      amountStroops,
+    });
+  }
+
+  if (licenseTerms?.stellar_address && licenseFeeStroops > 0n) {
+    const existing = payoutAllocations.get(licenseTerms.user_id);
+    payoutAllocations.set(licenseTerms.user_id, {
+      address: licenseTerms.stellar_address,
+      userId: licenseTerms.user_id,
+      amountStroops: (existing?.amountStroops ?? 0n) + licenseFeeStroops,
+    });
+  }
+
+  for (const allocation of payoutAllocations.values()) {
     let payout;
     try {
       payout = await createPayout({
         challengeId,
-        userId: winner.userId,
-        stellarAddress: winner.stellarAddress,
-        amountStroops,
+        userId: allocation.userId,
+        stellarAddress: allocation.address,
+        amountStroops: allocation.amountStroops,
       });
     } catch (err) {
       if (isFraudBlockError(err)) {
         logger.warn("Payout blocked by DB fraud guard", {
           challengeId,
-          userId: winner.userId,
+          userId: allocation.userId,
         });
         await query(
           `INSERT INTO audit_log (actor_id, action, entity, entity_key, after)
@@ -140,23 +193,23 @@ export async function processPayout(challengeId: string): Promise<void> {
           [
             "payout_blocked_fraud",
             "payout",
-            `${challengeId}:${winner.userId}`,
-            JSON.stringify({ challengeId, userId: winner.userId }),
-          ],
+            `${challengeId}:${allocation.userId}`,
+            JSON.stringify({ challengeId, userId: allocation.userId }),
+          ]
         );
         continue;
       }
       throw err;
     }
 
-    const amount = stroopsToUsdc(amountStroops);
-    recipients.push({ address: winner.stellarAddress, amount });
+    const amount = stroopsToUsdc(allocation.amountStroops);
+    recipients.push({ address: allocation.address, amount });
     payoutRecords.push({
       id: payout.id,
-      address: winner.stellarAddress,
-      userId: winner.userId,
+      address: allocation.address,
+      userId: allocation.userId,
       amount,
-      amountStroops,
+      amountStroops: allocation.amountStroops,
     });
   }
 
@@ -199,10 +252,16 @@ export async function processPayout(challengeId: string): Promise<void> {
           challengeId,
           referralWinAmountStroops: record.amountStroops,
         });
+        await insertPayoutNotification(record.userId, record.amount, txHash, challengeId);
       }
 
-      await updateChallengeStatus(challengeId, "settled", { payoutTxHashes: [txHash] });
-      logger.info("Payout complete via escrow contract", { challengeId, txHash });
+      await updateChallengeStatus(challengeId, "settled", {
+        payoutTxHashes: [txHash],
+      });
+      logger.info("Payout complete via escrow contract", {
+        challengeId,
+        txHash,
+      });
       return;
     } catch (error) {
       logger.error("Escrow settlement failed, falling back to direct payout", {
@@ -230,7 +289,7 @@ export async function processPayout(challengeId: string): Promise<void> {
             reason,
           });
         },
-      },
+      }
     );
   } catch (error) {
     if (isInsufficientFeeError(error)) {
@@ -267,6 +326,7 @@ export async function processPayout(challengeId: string): Promise<void> {
       await updatePayoutStatus(record.id, status, result.txHash || undefined, errorMessage);
       if (result.success) {
         await incrementUserEarnings(record.userId, record.amount);
+        await insertPayoutNotification(record.userId, record.amount, result.txHash, challengeId);
       }
     }
 
@@ -287,12 +347,15 @@ export async function processPayout(challengeId: string): Promise<void> {
   await updateChallengeStatus(
     challengeId,
     hasFailure ? "payout_failed" : "settled",
-    txHashes.length > 0 ? { payoutTxHashes: txHashes } : undefined,
+    txHashes.length > 0 ? { payoutTxHashes: txHashes } : undefined
   );
 
   if (hasFailure) {
     logger.warn("Payout completed with failures", { challengeId, txHashes });
   } else {
-    logger.info("Payout complete via direct transfer", { challengeId, txHashes });
+    logger.info("Payout complete via direct transfer", {
+      challengeId,
+      txHashes,
+    });
   }
 }

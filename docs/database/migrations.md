@@ -14,6 +14,32 @@ files under `apps/api/migrations/`.
 | Existing database upgrade       | `pnpm --filter @brandblitz/api migrate`        |
 | Migration verification in CI    | `pnpm --filter @brandblitz/api migrate:dryrun` |
 
+### Filename convention
+
+New migration files must match:
+
+```
+<NNNNN>-<kebab-case-description>[.down].sql
+```
+
+- `NNNNN` — a 5-digit, zero-padded sequence number, one greater than the
+  highest existing sequence number (e.g. `00027-...`).
+- `<kebab-case-description>` — lowercase words separated by single hyphens.
+- An optional `.down.sql` file with the same prefix provides the rollback.
+
+Example: `00027-add-payout-retry-count.sql` with an optional
+`00027-add-payout-retry-count.down.sql` rollback.
+
+Files predating this convention (mixed 4/5-digit and underscore-separated
+names under `apps/api/migrations/`) are grandfathered in and are **not**
+renamed — renaming an applied migration would require rewriting the
+`schema_migrations` table on every environment, which risks downtime. Only
+new migration files are required to follow the pattern.
+
+`pnpm --filter @brandblitz/api migrate:lint` (wired into CI, see
+`.github/workflows/ci.yml`) enforces this for every file that isn't in the
+grandfathered list.
+
 ### Migration files
 
 | File                              | Description                                              |
@@ -33,13 +59,21 @@ files under `apps/api/migrations/`.
 - `CREATE INDEX IF NOT EXISTS` / `DROP INDEX IF EXISTS` are used where possible
   so replays are safe on already-upgraded databases.
 
-### CI validation (dual-path)
+### CI validation (dual-path + down-migration exercise)
 
-The workflow `.github/workflows/db-dual-path.yml` now checks two paths:
+The workflow `.github/workflows/db-dual-path.yml` now checks three paths:
 
 1. **Fresh path** - runs `init.sql`
 2. **Migration path** - seeds `00000-initial.sql` and then applies the forward
    migrations in `apps/api/migrations/`
+3. **Down-migration exercise** - applies all forward migrations, then rolls back
+   each available `.down.sql` file in reverse version order, re-applies the
+   corresponding up migration, and asserts the schema matches the pre-rollback
+   baseline (a round-trip check).
 
-Both paths are diffed with `pg_dump --schema-only`; the workflow fails if they
-diverge.
+Both the fresh and migration paths are diffed with `pg_dump --schema-only`; the
+workflow fails if they diverge.
+
+The down-migration exercise runs whenever a PR adds or modifies a `.down.sql`
+file under `apps/api/migrations/`. This ensures every rollback code path is
+validated before it is ever needed during a live incident.

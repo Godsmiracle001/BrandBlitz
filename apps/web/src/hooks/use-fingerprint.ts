@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 
 /**
  * Hook to load FingerprintJS Pro visitorId for anti-cheat device fingerprinting.
- * 
+ *
  * Returns the visitorId if available, or null if:
  * - FingerprintJS is not configured (NEXT_PUBLIC_FINGERPRINT_PUBLIC_KEY missing)
  * - Loading fails (network error, invalid key, etc.)
- * 
+ *
  * Gracefully handles failures so the game can proceed without device ID.
  * The backend will flag sessions without a device ID for manual review.
  */
@@ -30,8 +30,6 @@ export function useFingerprint(): string | null {
       try {
         // Dynamically import to avoid bundling if not configured
         const FingerprintJS = await import("@fingerprintjs/fingerprintjs-pro-react");
-        const { FingerprintJsProvider } = FingerprintJS;
-
         // Get the visitorId from the global FingerprintJS instance
         // This assumes the provider is already set up in the layout
         const fpPromise = (window as any).fpPromise;

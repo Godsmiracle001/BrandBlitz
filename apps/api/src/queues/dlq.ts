@@ -11,6 +11,7 @@ import { query } from "../db";
 import { payoutQueue } from "./payout.queue";
 import { referralBonusQueue } from "./referral-bonus.queue";
 import { leagueQueue } from "./league.queue";
+import { recurringChallengesQueue } from "./recurring-challenges.queue";
 
 /**
  * dlq.ts — Dead-letter queue plumbing for the BullMQ pipelines.
@@ -22,7 +23,7 @@ import { leagueQueue } from "./league.queue";
  * observable signal for on-call engineers.
  *
  * To close that gap, each producing worker forwards a job to a named
- * dead-letter queue (`<queue>:dlq`) the moment it exhausts all attempts. A
+ * dead-letter queue (`<queue>-dlq`) the moment it exhausts all attempts. A
  * dedicated DLQ worker then reconciles the database (marking the stranded row
  * `failed`) and writes an `audit_log` record so the failure is triageable.
  *
@@ -40,9 +41,10 @@ export const dlqJobOptions = {
   attempts: 1,
 } satisfies JobsOptions;
 
-export const PAYOUT_DLQ_NAME = "payout:dlq";
-export const REFERRAL_BONUS_DLQ_NAME = "referral-bonus:dlq";
-export const LEAGUE_DLQ_NAME = "league:dlq";
+export const PAYOUT_DLQ_NAME = "payout-dlq";
+export const REFERRAL_BONUS_DLQ_NAME = "referral-bonus-dlq";
+export const LEAGUE_DLQ_NAME = "league-dlq";
+export const RECURRING_CHALLENGES_DLQ_NAME = "recurring-challenges-dlq";
 
 export const payoutDlqQueue = new Queue(PAYOUT_DLQ_NAME, {
   connection: redis,
@@ -59,11 +61,17 @@ export const leagueDlqQueue = new Queue(LEAGUE_DLQ_NAME, {
   defaultJobOptions: dlqJobOptions,
 });
 
+export const recurringChallengesDlqQueue = new Queue(RECURRING_CHALLENGES_DLQ_NAME, {
+  connection: redis,
+  defaultJobOptions: dlqJobOptions,
+});
+
 /** Lookup of DLQ name → queue, used by the admin inspection endpoint. */
 export const DLQ_QUEUES: Record<string, Queue> = {
   [PAYOUT_DLQ_NAME]: payoutDlqQueue,
   [REFERRAL_BONUS_DLQ_NAME]: referralBonusDlqQueue,
   [LEAGUE_DLQ_NAME]: leagueDlqQueue,
+  [RECURRING_CHALLENGES_DLQ_NAME]: recurringChallengesDlqQueue,
 };
 
 /** Lookup of DLQ name → the original queue jobs should be replayed onto. */
@@ -71,6 +79,7 @@ export const DLQ_SOURCE_QUEUES: Record<string, Queue> = {
   [PAYOUT_DLQ_NAME]: payoutQueue,
   [REFERRAL_BONUS_DLQ_NAME]: referralBonusQueue,
   [LEAGUE_DLQ_NAME]: leagueQueue,
+  [RECURRING_CHALLENGES_DLQ_NAME]: recurringChallengesQueue,
 };
 
 export interface DeadLetterPayload {
@@ -236,12 +245,59 @@ async function processLeagueDlqJob(job: Job<DeadLetterPayload>): Promise<void> {
   });
 }
 
+async function processRecurringChallengesDlqJob(
+  job: Job<DeadLetterPayload>,
+): Promise<void> {
+  const templateId = (
+    job.data.data as { templateId?: string } | undefined
+  )?.templateId;
+  const message = truncate(
+    `Recurring-challenges job exhausted all ${job.data.attemptsMade} retries: ${job.data.failedReason}`,
+  );
+
+  if (templateId) {
+    try {
+      await query(
+        `UPDATE challenge_templates
+         SET status = 'paused', updated_at = NOW()
+         WHERE id = $1 AND status = 'active' AND deleted_at IS NULL`,
+        [templateId],
+      );
+    } catch (err) {
+      logger.error("Failed to auto-pause dead-lettered template", {
+        templateId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  await query(
+    `INSERT INTO audit_log (actor_id, action, entity, entity_key, after)
+     VALUES (NULL, 'recurring_challenges.dead_letter', 'challenge_template', $1, $2)`,
+    [
+      templateId ?? null,
+      JSON.stringify({
+        jobName: job.data.jobName,
+        failedReason: job.data.failedReason,
+        attemptsMade: job.data.attemptsMade,
+        originalJobId: job.data.originalJobId,
+      }),
+    ],
+  );
+
+  logger.error("Recurring challenges job permanently failed — dead-lettered", {
+    jobName: job.data.jobName,
+    templateId,
+    message,
+  });
+}
+
 const dlqWorkerOptions = {
   connection: redis,
   concurrency: 1,
 } satisfies WorkerOptions;
 
-/** Create the three DLQ workers. Returns them so the caller can close them. */
+/** Create DLQ workers. Returns them so the caller can close them. */
 export function createDlqWorkers(WorkerImpl: typeof Worker = Worker): Worker[] {
   return [
     new WorkerImpl(PAYOUT_DLQ_NAME, processPayoutDlqJob, dlqWorkerOptions),
@@ -251,5 +307,10 @@ export function createDlqWorkers(WorkerImpl: typeof Worker = Worker): Worker[] {
       dlqWorkerOptions,
     ),
     new WorkerImpl(LEAGUE_DLQ_NAME, processLeagueDlqJob, dlqWorkerOptions),
+    new WorkerImpl(
+      RECURRING_CHALLENGES_DLQ_NAME,
+      processRecurringChallengesDlqJob,
+      dlqWorkerOptions,
+    ),
   ];
 }

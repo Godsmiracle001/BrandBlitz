@@ -9,6 +9,7 @@ import { config } from "../../lib/config";
 import { forwardToDlq, payoutDlqQueue } from "../dlq";
 
 export const PAYOUT_WORKER_CONCURRENCY = config.PAYOUT_WORKER_CONCURRENCY;
+const SHUTDOWN_TIMEOUT_MS = 30000; // 30 seconds
 
 export const payoutWorkerOptions = {
   connection: redis,
@@ -62,6 +63,8 @@ export function createPayoutWorker(WorkerImpl: typeof Worker = Worker): Worker {
     });
   });
 
+  setupGracefulShutdown(worker, "payout");
+
   return worker;
 }
 
@@ -84,4 +87,36 @@ export async function handleExhaustedPayoutJob(
       }),
     ]
   );
+}
+
+function setupGracefulShutdown(worker: Worker, workerName: string): void {
+  let isShuttingDown = false;
+
+  const gracefulShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+
+    logger.info(`${signal} received, gracefully shutting down ${workerName} worker...`);
+
+    const shutdownTimer = setTimeout(() => {
+      logger.warn(`${workerName} worker shutdown timeout exceeded, forcing exit`);
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS);
+
+    try {
+      await worker.close();
+      clearTimeout(shutdownTimer);
+      logger.info(`${workerName} worker closed gracefully`);
+      process.exit(0);
+    } catch (error) {
+      clearTimeout(shutdownTimer);
+      logger.error(`Error during ${workerName} worker shutdown`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      process.exit(1);
+    }
+  };
+
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 }

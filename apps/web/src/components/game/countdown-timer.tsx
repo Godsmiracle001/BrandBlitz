@@ -18,9 +18,19 @@ interface CountdownTimerProps {
   onTick?: () => void;
   className?: string;
   paused?: boolean;
+  /** Called when the pause state changes (for parent to disable buttons) */
+  onPausedChange?: (isPaused: boolean) => void;
 }
 
-export function CountdownTimer({ durationSeconds, deadlineAt, onExpire, onTick, className, paused = false }: CountdownTimerProps) {
+export function CountdownTimer({
+  durationSeconds,
+  deadlineAt,
+  onExpire,
+  onTick,
+  className,
+  paused = false,
+  onPausedChange,
+}: CountdownTimerProps) {
   const { timeLeftMs, isPaused } = useCountdown({ durationSeconds, deadlineAt, onExpire, paused });
 
   const seconds = Math.ceil(timeLeftMs / 1000);
@@ -36,27 +46,29 @@ export function CountdownTimer({ durationSeconds, deadlineAt, onExpire, onTick, 
     prevSecondsRef.current = seconds;
   }, [seconds, isLow, onTick]);
 
+  // Notify parent of pause state changes
+  React.useEffect(() => {
+    onPausedChange?.(isPaused);
+  }, [isPaused, onPausedChange]);
+
   return (
-    <div className={cn("flex flex-col items-center gap-2", className)}>
+    <div className={cn("flex flex-col items-center gap-2", className)} data-tutorial="timer">
       {isPaused ? (
-        <span className="text-lg font-semibold text-amber-600 flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+        <span className="flex items-center gap-2 text-lg font-semibold text-amber-600">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
           Paused
         </span>
       ) : (
         <span
           className={cn(
             "text-4xl font-bold tabular-nums transition-colors",
-            isLow ? "text-red-500 animate-pulse" : "text-[var(--foreground)]"
+            isLow ? "animate-pulse text-red-500" : "text-[var(--foreground)]"
           )}
         >
           {seconds}
         </span>
       )}
-      <Progress
-        value={progress}
-        className={cn("w-full h-3", isLow && "[&>div]:bg-red-500")}
-      />
+      <Progress value={progress} className={cn("h-3 w-full", isLow && "[&>div]:bg-red-500")} />
     </div>
   );
 }

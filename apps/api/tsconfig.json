@@ -10,6 +10,7 @@
     "composite": true,
     "ignoreDeprecations": "6.0",
     "paths": {
+      "@/*": ["./src/*"],
       "@brandblitz/stellar": ["../../packages/stellar/src/index.ts"],
       "@brandblitz/storage": ["../../packages/storage/src/index.ts"]
     }

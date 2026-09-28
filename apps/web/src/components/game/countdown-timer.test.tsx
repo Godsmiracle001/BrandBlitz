@@ -5,6 +5,8 @@ import { CountdownTimer } from './countdown-timer';
 describe('CountdownTimer', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // Ensure document is visible and window is focused between tests
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true, writable: true });
   });
 
   afterEach(() => {
@@ -121,9 +123,9 @@ describe('CountdownTimer', () => {
     Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true, writable: true });
     document.dispatchEvent(new Event('visibilitychange'));
 
-    // Advance 5 seconds while hidden — displayed time must not change
+    // Advance 5 seconds while hidden — timer shows Paused indicator
     act(() => { vi.advanceTimersByTime(5000); });
-    expect(screen.getByText('8')).not.toBeNull();
+    expect(screen.getByText('Paused')).not.toBeNull();
 
     // Restore the tab — timer resumes from where it paused
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true, writable: true });

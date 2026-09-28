@@ -80,3 +80,24 @@ export async function countReferralConversions(
   );
   return Number(result.rows[0]?.count ?? 0);
 }
+
+export async function getReferralNetworkUserIds(
+  userId: string,
+): Promise<string[]> {
+  const result = await query<{ user_id: string }>(
+    `SELECT DISTINCT user_id
+     FROM (
+       SELECT referred_id AS user_id
+       FROM referrals
+       WHERE referrer_id = $1
+       UNION
+       SELECT referrer_id AS user_id
+       FROM referrals
+       WHERE referred_id = $1
+     ) AS network
+     JOIN users u ON network.user_id = u.id
+     WHERE u.deleted_at IS NULL`,
+    [userId],
+  );
+  return result.rows.map((r) => r.user_id);
+}

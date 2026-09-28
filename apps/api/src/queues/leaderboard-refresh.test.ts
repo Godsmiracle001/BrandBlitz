@@ -26,13 +26,17 @@ vi.mock("../lib/metrics", () => ({
 }));
 
 vi.mock("bullmq", () => ({
-  Queue: vi.fn().mockImplementation(() => ({
+  Queue: vi.fn(function Queue() {
+    return {
     add: mocks.queueAdd,
-  })),
-  Worker: vi.fn().mockImplementation(() => ({
-    on: vi.fn(),
-    close: vi.fn(),
-  })),
+    };
+  }),
+  Worker: vi.fn(function Worker() {
+    return {
+      on: vi.fn(),
+      close: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock("../lib/logger", () => ({

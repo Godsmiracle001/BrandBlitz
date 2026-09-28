@@ -20,10 +20,34 @@ const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/;
 const MIN_CHALLENGE_DURATION_HOURS = 1;
 const MAX_CHALLENGE_DURATION_HOURS = 720;
 
+const FormSchema = z.object({
+  name: z.string().trim().min(1, "Brand name is required").max(100),
+  tagline: z.string().max(100, "Tagline must be 100 characters or fewer").optional(),
+  brandStory: z.string().max(500, "Brand story must be 500 characters or fewer").optional(),
+  primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Invalid primary color"),
+  secondaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Invalid secondary color"),
+  poolAmountUsdc: z
+    .string()
+    .min(1, "Prize pool is required")
+    .refine((val) => Number(val) >= 10, "Minimum pool amount is 10 USDC"),
+  durationHours: z.string().refine((val) => {
+    const num = Number(val);
+    return (
+      Number.isInteger(num) &&
+      num >= MIN_CHALLENGE_DURATION_HOURS &&
+      num <= MAX_CHALLENGE_DURATION_HOURS
+    );
+  }, "Duration must be between 1 and 720 hours"),
+});
+
+type BrandKitFields = z.infer<typeof FormSchema>;
+type FieldName = keyof BrandKitFields;
+
 export function BrandKitForm({ apiToken }: BrandKitFormProps) {
   const router = useRouter();
   const { submitting, wrap, setSubmitting } = useSubmitting();
   const [error, setError] = useState<string | null>(null);
+  const [touched, setTouched] = useState<Partial<Record<FieldName, boolean>>>({});
 
   const [fields, setFields] = useState({
     name: "",
@@ -55,23 +79,21 @@ export function BrandKitForm({ apiToken }: BrandKitFormProps) {
     hasValidPoolAmount &&
     hasValidDuration &&
     Boolean(logoKey);
-
-const FormSchema = z.object({
-  name: z.string().min(1, "Brand name is required").max(100),
-  tagline: z.string().max(100).optional(),
-  brandStory: z.string().max(500).optional(),
-  primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Invalid primary color"),
-  secondaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/, "Invalid secondary color"),
-  poolAmountUsdc: z.string().refine((val) => Number(val) >= 10, "Minimum pool amount is 10 USDC"),
-  durationHours: z.string().refine((val) => {
-    const num = Number(val);
-    return (
-      Number.isInteger(num) &&
-      num >= MIN_CHALLENGE_DURATION_HOURS &&
-      num <= MAX_CHALLENGE_DURATION_HOURS
-    );
-  }, "Duration must be between 1 and 720 hours"),
-});
+  const liveValidation = FormSchema.safeParse(fields);
+  const fieldErrors: Partial<Record<FieldName, string>> = {};
+  if (!liveValidation.success) {
+    for (const issue of liveValidation.error.issues) {
+      const field = issue.path[0] as FieldName | undefined;
+      if (field && !fieldErrors[field]) fieldErrors[field] = issue.message;
+    }
+  }
+  const unmetRequirements = [
+    !hasRequiredFields && "Enter a brand name and prize pool amount.",
+    !hasValidColors && "Use valid six-digit hex colors.",
+    !hasValidPoolAmount && "Set a prize pool of at least 10 USDC.",
+    !hasValidDuration && "Set a duration between 1 and 720 whole hours.",
+    !logoKey && "Upload a brand logo (required).",
+  ].filter((requirement): requirement is string => Boolean(requirement));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,7 +105,16 @@ const FormSchema = z.object({
 
     const validationResult = FormSchema.safeParse(fields);
     if (!validationResult.success) {
-      setError(validationResult.error.issues.map(err => err.message).join(", "));
+      setTouched({
+        name: true,
+        tagline: true,
+        brandStory: true,
+        primaryColor: true,
+        secondaryColor: true,
+        poolAmountUsdc: true,
+        durationHours: true,
+      });
+      setError("Review the highlighted fields and try again.");
       return;
     }
 
@@ -112,9 +143,10 @@ const FormSchema = z.object({
 
         const brandId = brandRes.data.brand.id;
         const parsedDurationHours = Number.parseInt(fields.durationHours, 10);
-        const durationHours = Number.isFinite(parsedDurationHours) && parsedDurationHours > 0
-          ? parsedDurationHours
-          : 72;
+        const durationHours =
+          Number.isFinite(parsedDurationHours) && parsedDurationHours > 0
+            ? parsedDurationHours
+            : 72;
         const nowMs = Date.now();
         const endsAtMs = nowMs + durationHours * 60 * 60 * 1000;
         if (endsAtMs < nowMs + MIN_CHALLENGE_DURATION_HOURS * 60 * 60 * 1000) {
@@ -144,15 +176,24 @@ const FormSchema = z.object({
     }
   };
 
-  const set = (k: keyof typeof fields) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+  const set = (k: FieldName) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFields((prev) => ({ ...prev, [k]: e.target.value }));
+    setTouched((prev) => ({ ...prev, [k]: true }));
+  };
+
+  const fieldError = (field: FieldName) =>
+    touched[field] && fieldErrors[field] ? (
+      <p id={`${field}Error`} role="alert" className="text-xs text-red-500">
+        {fieldErrors[field]}
+      </p>
+    ) : null;
 
   return (
     <form onSubmit={handleSubmit} className="space-y-8">
       {/* Brand Info */}
       <Card>
-        <CardContent className="pt-6 space-y-4">
-          <h2 className="font-semibold text-lg">Brand Information</h2>
+        <CardContent className="space-y-4 pt-6">
+          <h2 className="text-lg font-semibold">Brand Information</h2>
 
           <div className="space-y-2">
             <Label htmlFor="name">Brand Name *</Label>
@@ -162,7 +203,10 @@ const FormSchema = z.object({
               onChange={set("name")}
               placeholder="e.g. Acme Corp"
               required
+              aria-invalid={Boolean(touched.name && fieldErrors.name)}
+              aria-describedby={touched.name && fieldErrors.name ? "nameError" : undefined}
             />
+            {fieldError("name")}
           </div>
 
           <div className="space-y-2">
@@ -174,6 +218,7 @@ const FormSchema = z.object({
               placeholder="Your brand's catchy one-liner"
               maxLength={120}
             />
+            {fieldError("tagline")}
           </div>
 
           <div className="space-y-2">
@@ -184,11 +229,12 @@ const FormSchema = z.object({
               onChange={set("brandStory")}
               placeholder="What makes your brand unique? (used to generate quiz questions)"
               rows={4}
-              className="w-full rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)] resize-none"
+              className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-2 text-sm placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
             />
+            {fieldError("brandStory")}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="primaryColor">Primary Color</Label>
               <div className="flex items-center gap-2">
@@ -197,7 +243,7 @@ const FormSchema = z.object({
                   id="primaryColor"
                   value={fields.primaryColor}
                   onChange={set("primaryColor")}
-                  className="h-10 w-14 rounded border border-[var(--border)] cursor-pointer"
+                  className="h-10 w-14 cursor-pointer rounded border border-[var(--border)]"
                 />
                 <Input
                   id="primaryColorHex"
@@ -221,6 +267,7 @@ const FormSchema = z.object({
                   Use format `#rrggbb` in lowercase.
                 </p>
               ) : null}
+              {fieldError("primaryColor")}
             </div>
             <div className="space-y-2">
               <Label htmlFor="secondaryColor">Secondary Color</Label>
@@ -230,7 +277,7 @@ const FormSchema = z.object({
                   id="secondaryColor"
                   value={fields.secondaryColor}
                   onChange={set("secondaryColor")}
-                  className="h-10 w-14 rounded border border-[var(--border)] cursor-pointer"
+                  className="h-10 w-14 cursor-pointer rounded border border-[var(--border)]"
                 />
                 <Input
                   id="secondaryColorHex"
@@ -254,19 +301,19 @@ const FormSchema = z.object({
                   Use format `#rrggbb` in lowercase.
                 </p>
               ) : null}
+              {fieldError("secondaryColor")}
             </div>
           </div>
-
         </CardContent>
       </Card>
 
       {/* Brand Assets */}
       <Card>
-        <CardContent className="pt-6 space-y-4">
-          <h2 className="font-semibold text-lg">Brand Assets</h2>
+        <CardContent className="space-y-4 pt-6">
+          <h2 className="text-lg font-semibold">Brand Assets</h2>
 
           <div className="space-y-2">
-            <Label>Logo</Label>
+            <Label>Logo *</Label>
             <UploadField
               label="Upload Brand Logo"
               uploadType="brand-logo"
@@ -299,8 +346,8 @@ const FormSchema = z.object({
 
       {/* Challenge Settings */}
       <Card>
-        <CardContent className="pt-6 space-y-4">
-          <h2 className="font-semibold text-lg">Challenge Settings</h2>
+        <CardContent className="space-y-4 pt-6">
+          <h2 className="text-lg font-semibold">Challenge Settings</h2>
 
           <div className="space-y-2">
             <Label htmlFor="poolAmountUsdc">Prize Pool (USDC) *</Label>
@@ -313,7 +360,14 @@ const FormSchema = z.object({
               onChange={set("poolAmountUsdc")}
               placeholder="e.g. 100.00"
               required
+              aria-invalid={Boolean(touched.poolAmountUsdc && fieldErrors.poolAmountUsdc)}
+              aria-describedby={
+                touched.poolAmountUsdc && fieldErrors.poolAmountUsdc
+                  ? "poolAmountUsdcError"
+                  : undefined
+              }
             />
+            {fieldError("poolAmountUsdc")}
             <p className="text-xs text-[var(--muted-foreground)]">
               You will receive a Stellar deposit address to fund the prize pool after creation.
             </p>
@@ -328,7 +382,14 @@ const FormSchema = z.object({
               max={MAX_CHALLENGE_DURATION_HOURS}
               value={fields.durationHours}
               onChange={set("durationHours")}
+              aria-invalid={Boolean(touched.durationHours && fieldErrors.durationHours)}
+              aria-describedby={
+                touched.durationHours && fieldErrors.durationHours
+                  ? "durationHoursError"
+                  : undefined
+              }
             />
+            {fieldError("durationHours")}
           </div>
         </CardContent>
       </Card>
@@ -337,11 +398,26 @@ const FormSchema = z.object({
         <p
           role="alert"
           aria-live="assertive"
-          className="text-sm text-red-500 bg-red-50 border border-red-200 rounded-lg p-3"
+          className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-500"
         >
           {error}
         </p>
       )}
+
+      {!submitting && unmetRequirements.length > 0 ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          <p className="font-medium">Complete these requirements to create your brand kit:</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">
+            {unmetRequirements.map((requirement) => (
+              <li key={requirement}>{requirement}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <Button type="submit" size="lg" className="w-full" disabled={!canSubmit}>
         {submitting ? "Creating..." : "Create Brand Kit & Challenge"}

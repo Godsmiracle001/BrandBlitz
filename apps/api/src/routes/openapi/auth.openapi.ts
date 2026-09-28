@@ -42,7 +42,10 @@ registerEndpoint({
   summary: "Exchange a Google ID token for a BrandBlitz session",
   request: { body: z.object({ idToken: z.string().min(1) }) },
   responses: {
-    200: { description: "Authenticated", schema: TokenPair.extend({ user: UserSchema }) },
+    200: {
+      description: "Authenticated",
+      schema: TokenPair.extend({ user: UserSchema }).openapi("AuthResponse"),
+    },
     401: { description: "Invalid Google ID token", schema: ErrorShape },
   },
 });

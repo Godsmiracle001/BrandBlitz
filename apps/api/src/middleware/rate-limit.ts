@@ -17,7 +17,7 @@
 
 import type { Request, Response } from "express";
 import { isIP } from "node:net";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { RedisStore } from "rate-limit-redis";
 import { redis } from "../lib/redis";
 import { logger } from "../lib/logger";
@@ -97,11 +97,11 @@ function userAwareKey(req: Request): string {
   if (req.user?.sub) {
     return `user:${req.user.sub}`;
   }
-  return `ip:${normalizeClientIp(req.ip)}`;
+  return `ip:${ipKeyGenerator(req.ip)}`;
 }
 
 function ipKey(req: Request): string {
-  return `ip:${normalizeClientIp(req.ip)}`;
+  return `ip:${ipKeyGenerator(req.ip)}`;
 }
 
 // ── Redis store ───────────────────────────────────────────────────────────────
@@ -129,15 +129,37 @@ const redisStore = config.NODE_ENV === "test" ? undefined : makeRedisStore();
 
 // ── Limiters ──────────────────────────────────────────────────────────────────
 
+import { getConfig } from "../db/queries/config";
+
+let cachedRateLimit = 200;
+let lastRateLimitFetch = 0;
+const RATE_LIMIT_CACHE_TTL = 10000; // 10 seconds
+
+async function getApiRateLimit(): Promise<number> {
+  const now = Date.now();
+  if (now - lastRateLimitFetch > RATE_LIMIT_CACHE_TTL) {
+    try {
+      const configObj = await getConfig("rate_limit_requests_per_minute");
+      if (configObj && typeof configObj.limit === "number") {
+        cachedRateLimit = configObj.limit;
+      }
+    } catch (err) {
+      logger.warn("Failed to fetch rate_limit_requests_per_minute", { error: (err as Error).message });
+    }
+    lastRateLimitFetch = now;
+  }
+  return cachedRateLimit;
+}
+
 /**
  * General API rate limit.
- *   - Authenticated users: 200 req / 15 min per user ID
- *   - Anonymous (IP):      200 req / 15 min per IP
+ *   - Authenticated users: dynamic req / 15 min per user ID
+ *   - Anonymous (IP):      dynamic req / 15 min per IP
  *     (higher than before to avoid punishing shared IPs)
  */
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 200,
+  max: async () => await getApiRateLimit(),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   keyGenerator: userAwareKey,
@@ -257,5 +279,62 @@ export const webhookRotationLimiter = rateLimit({
   handler: (req, res) => {
     record429("webhookRotationLimiter", userAwareKey(req));
     res.status(429).json({ error: "Too many webhook rotation requests" });
+  },
+});
+
+/**
+ * Waitlist signup: 5 req / hour per IP (#470).
+ * Public endpoint — keyed by IP to prevent bulk scraping.
+ */
+export const waitlistLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: ipKey,
+  passOnStoreError: true,
+  store: redisStore,
+  handler: (req, res) => {
+    record429("waitlistLimiter", normalizeClientIp(req.ip));
+    res.status(429).json({ error: "Too many signup attempts, please try again later" });
+  },
+});
+
+/**
+ * Question preview (issue #467): 10 req / hour per brand.
+ * Keyed by the :id route param (not the caller) so the cap applies per-brand
+ * regardless of which owner/admin account is making the request, preventing
+ * AI generation cost abuse via a single brand.
+ */
+export const questionPreviewLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => `brand:${req.params.id}`,
+  passOnStoreError: true,
+  store: redisStore,
+  handler: (req, res) => {
+    record429("questionPreviewLimiter", `brand:${req.params.id}`);
+    res.status(429).json({ error: "Too many question preview requests for this brand" });
+  },
+});
+
+/**
+ * Challenge report: 5 req / 15 min per authenticated user.
+ * Prevents report-spam across multiple challenges.
+ */
+export const reportLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.user?.sub ? `user:${req.user.sub}` : `ip:${normalizeClientIp(req.ip)}`),
+  passOnStoreError: true,
+  store: redisStore,
+  handler: (req, res) => {
+    const key = req.user?.sub ? `user:${req.user.sub}` : `ip:${normalizeClientIp(req.ip)}`;
+    record429("reportLimiter", key);
+    res.status(429).json({ error: "Too many report requests, please try again later" });
   },
 });

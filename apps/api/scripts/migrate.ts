@@ -8,7 +8,8 @@ const command = process.argv[2] ?? "up";
 const rollbackCount = Number.parseInt(process.argv[3] ?? "1", 10);
 const databaseUrl = process.env.DATABASE_URL;
 
-if (!databaseUrl) {
+// `lint` only checks filenames on disk — it needs no database connection.
+if (!databaseUrl && command !== "lint") {
   console.error("DATABASE_URL is required to run migrations");
   process.exit(1);
 }
@@ -181,6 +182,76 @@ async function runDown(count: number): Promise<void> {
   console.log("Rollback ANALYZE complete.");
 }
 
+// Canonical filename pattern documented in docs/database/migrations.md:
+// <5-digit-zero-padded-sequence>-<kebab-case-description>[.down].sql
+const MIGRATION_FILENAME_PATTERN = /^\d{5}-[a-z0-9]+(-[a-z0-9]+)*(\.down)?\.sql$/;
+
+// Migrations that predate the canonical naming convention. Renaming them
+// would require a downtime-inducing schema_migrations rewrite, so they're
+// grandfathered in — only *new* migration files are required to match
+// MIGRATION_FILENAME_PATTERN. See docs/database/migrations.md.
+const LEGACY_EXEMPT_FILES = new Set([
+  "00000-initial.sql",
+  "00001-hot-path-indexes.sql",
+  "00001-hot-path-indexes.down.sql",
+  "00002-refunds.sql",
+  "00003-soft-delete.sql",
+  "00012-cursor-pagination-indexes.sql",
+  "0006-leaderboard-mv.sql",
+  "0007-archive-tables.sql",
+  "0010-legal-docs.sql",
+  "0011-session-round-scores-cascade.sql",
+  "0012-multisig-escrow.sql",
+  "0013-deposit-confirmations.sql",
+  "0014-fee-bump-payouts.sql",
+  "0015_idx_audit_log_entity_key.down.sql",
+  "0015_idx_audit_log_entity_key.sql",
+  "0016_idx_game_sessions_flagged.down.sql",
+  "0016_idx_game_sessions_flagged.sql",
+  "0017-waitlist.down.sql",
+  "0017-waitlist.sql",
+  "0018-challenges-reported-count.down.sql",
+  "0018-challenges-reported-count.sql",
+  "0019-users-last-active-at.down.sql",
+  "0019-users-last-active-at.sql",
+  "0020-app-config-updated-by.down.sql",
+  "0020-app-config-updated-by.sql",
+  "0021_session_round_scores_reaction_time.down.sql",
+  "0021_session_round_scores_reaction_time.sql",
+  "0022_brands_question_template.down.sql",
+  "0022_brands_question_template.sql",
+  "0023_session_abandon_reason.down.sql",
+  "0023_session_abandon_reason.sql",
+  "0024-username-unique-partial.down.sql",
+  "0024-username-unique-partial.sql",
+  "0025-brand-webhooks.down.sql",
+  "0025-brand-webhooks.sql",
+  "0026-challenge-templates.down.sql",
+  "0026-challenge-templates.sql",
+]);
+
+async function runLint(): Promise<void> {
+  const dirEntries = await readdir(migrationsDir, { withFileTypes: true });
+  const sqlFiles = dirEntries
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
+    .map((entry) => entry.name)
+    .sort();
+
+  const invalid = sqlFiles.filter(
+    (file) => !LEGACY_EXEMPT_FILES.has(file) && !MIGRATION_FILENAME_PATTERN.test(file)
+  );
+
+  if (invalid.length > 0) {
+    console.error("New migration filenames must match <NNNNN>-<kebab-case-description>[.down].sql:");
+    for (const file of invalid) {
+      console.error(`  - ${file}`);
+    }
+    process.exit(1);
+  }
+
+  console.log(`All ${sqlFiles.length} migration filenames are valid (canonical or grandfathered).`);
+}
+
 async function main(): Promise<void> {
   try {
     if (command === "up") {
@@ -198,9 +269,16 @@ async function main(): Promise<void> {
       return;
     }
 
+    if (command === "lint") {
+      await runLint();
+      return;
+    }
+
     throw new Error(`Unknown migration command: ${command}`);
   } finally {
-    await pool.end();
+    if (command !== "lint") {
+      await pool.end();
+    }
   }
 }
 

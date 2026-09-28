@@ -147,7 +147,8 @@ describe("UploadField — wrong MIME type", () => {
     const pdfFile = new File([buf], "document.pdf", { type: "application/pdf" });
 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await userEvent.upload(input, pdfFile);
+    const user = userEvent.setup({ applyAccept: false });
+    await user.upload(input, pdfFile);
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();
@@ -163,7 +164,8 @@ describe("UploadField — wrong MIME type", () => {
     const svgFile = new File([svgContent], "icon.svg", { type: "image/svg+xml" });
 
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    await userEvent.upload(input, svgFile);
+    const user = userEvent.setup({ applyAccept: false });
+    await user.upload(input, svgFile);
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toBeInTheDocument();

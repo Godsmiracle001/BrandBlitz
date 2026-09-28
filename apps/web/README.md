@@ -540,8 +540,42 @@ pnpm --filter @brandblitz/web type-check
 # Production build
 pnpm --filter @brandblitz/web build
 
+# Bundle analysis (requires ANALYZE=true)
+pnpm --filter @brandblitz/web analyze
+
 # Start production server
 pnpm --filter @brandblitz/web start
+```
+
+### Bundle size check
+
+Before you push a web change, run the bundle budget check locally. It needs a fresh production
+build, because it measures `apps/web/.next/static/chunks/`:
+
+```bash
+# From the monorepo root
+pnpm --filter @brandblitz/web build   # prerequisite: produces .next/static/chunks
+pnpm check:bundle                     # runs scripts/check-bundle-budget.mjs from the repo root
+```
+
+`pnpm check:bundle` compares the total gzip size of the built chunks against
+[`docs/perf/bundle-baseline.txt`](../../docs/perf/bundle-baseline.txt). It prints
+`::warning::Bundle size regressed by more than 10%!` when you're over budget. If you skip the build,
+it measures nothing and reports a meaningless "within budget".
+
+**Troubleshooting a bundle size warning:** see [`docs/perf/README.md`](../../docs/perf/README.md#troubleshooting-a-bundle-size-warning).
+It covers where `scripts/generate-bundle-report.mjs` sends its report (stdout, no file), how to
+read the report, and how to diff it against the baseline to find the chunk that grew.
+
+### Dependency version alignment
+
+`@next/bundle-analyzer` must always be pinned to the **exact same version** as the `next` dependency. Both packages are published together from the Next.js monorepo, and a mismatch can cause build-time incompatibilities during `pnpm analyze`.
+
+When upgrading Next.js, update both in `package.json` atomically:
+
+```json
+"next": "X.Y.Z",
+"@next/bundle-analyzer": "X.Y.Z"
 ```
 
 ---

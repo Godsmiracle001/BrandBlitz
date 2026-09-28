@@ -1,4 +1,5 @@
 import { query } from "../index";
+import { encodeCursor, buildCursorWhereSimple, decodeCursorSafe } from "../pagination";
 
 export interface FraudFlag {
   id: string;
@@ -44,53 +45,72 @@ export async function createFraudFlag(data: {
 
 export async function getFraudFlags(opts: {
   status?: string;
-  page: number;
+  cursor?: string;
   pageSize: number;
-}): Promise<{ flags: FraudFlagDetail[]; total: number }> {
-  const offset = (opts.page - 1) * opts.pageSize;
+}): Promise<{ flags: FraudFlagDetail[]; nextCursor: string | null }> {
   const statusParam = opts.status ?? null;
+  const cursorValues = decodeCursorSafe(opts.cursor, ["created_at", "id"]);
 
-  const [rowsResult, countResult] = await Promise.all([
-    query<FraudFlagDetail>(
-      `SELECT
-         ff.id,
-         ff.session_id,
-         ff.user_id,
-         ff.flag_type,
-         ff.details,
-         ff.status,
-         ff.resolution_reason,
-         ff.resolved_by,
-         ff.resolved_at,
-         ff.created_at,
-         ff.updated_at,
-         u.display_name  AS user_display_name,
-         u.email         AS user_email,
-         gs.challenge_id,
-         gs.round_1_reaction_ms,
-         gs.round_2_reaction_ms,
-         gs.round_3_reaction_ms,
-         gs.flag_reasons AS session_flag_reasons,
-         gs.device_id
-       FROM fraud_flags ff
-       JOIN users        u  ON ff.user_id    = u.id
-       JOIN game_sessions gs ON ff.session_id = gs.id
-       WHERE ($1::text IS NULL OR ff.status = $1)
-       ORDER BY ff.created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [statusParam, opts.pageSize, offset]
-    ),
-    query<{ count: string }>(
-      `SELECT COUNT(*) AS count
-       FROM fraud_flags
-       WHERE ($1::text IS NULL OR status = $1)`,
-      [statusParam]
-    ),
-  ]);
+  let whereExtra = "";
+  const params: unknown[] = [statusParam];
+
+  if (cursorValues) {
+    const { clause, params: cursorParams } = buildCursorWhereSimple(
+      "ff.created_at",
+      "DESC",
+      cursorValues.created_at,
+      cursorValues.id as string,
+      2,
+    );
+    whereExtra = clause;
+    params.push(cursorValues.created_at, cursorValues.id);
+  }
+
+  params.push(opts.pageSize);
+
+  const rowsResult = await query<FraudFlagDetail>(
+    `SELECT
+       ff.id,
+       ff.session_id,
+       ff.user_id,
+       ff.flag_type,
+       ff.details,
+       ff.status,
+       ff.resolution_reason,
+       ff.resolved_by,
+       ff.resolved_at,
+       ff.created_at,
+       ff.updated_at,
+       u.display_name  AS user_display_name,
+       u.email         AS user_email,
+       gs.challenge_id,
+       gs.round_1_reaction_ms,
+       gs.round_2_reaction_ms,
+       gs.round_3_reaction_ms,
+       gs.flag_reasons AS session_flag_reasons,
+       gs.device_id
+     FROM fraud_flags ff
+     JOIN users        u  ON ff.user_id    = u.id
+     JOIN game_sessions gs ON ff.session_id = gs.id
+     WHERE ($1::text IS NULL OR ff.status = $1)
+     ${whereExtra}
+     ORDER BY ff.created_at DESC, ff.id DESC
+     LIMIT $${params.length}`,
+    params,
+  );
+
+  const flags = rowsResult.rows;
+  const nextCursor: string | null =
+    flags.length === opts.pageSize
+      ? encodeCursor({
+          created_at: flags[flags.length - 1].created_at,
+          id: flags[flags.length - 1].id,
+        })
+      : null;
 
   return {
-    flags: rowsResult.rows,
-    total: parseInt(countResult.rows[0]?.count ?? "0", 10),
+    flags,
+    nextCursor,
   };
 }
 

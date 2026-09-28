@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { z } from "zod";
 import { logger } from "../lib/logger";
+import { captureMessage } from "../lib/sentry";
 
 const router = Router();
 
@@ -29,7 +30,7 @@ const CspReportSchema = z.object({
  *
  * Spec: https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy-Report-Only
  */
-router.post("/", (req: Request, res: Response) => {
+router.post("/", async (req: Request, res: Response) => {
   const parsed = CspReportSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Missing or invalid csp-report body" });
@@ -56,14 +57,12 @@ router.post("/", (req: Request, res: Response) => {
     disposition: report.disposition || "report-only",
   });
 
-  // TODO: In production, send to monitoring service (Sentry, DataDog, etc.)
-  // Example:
-  // if (report["violated-directive"].includes("script")) {
-  //   Sentry.captureMessage("CSP script violation", {
-  //     level: "warning",
-  //     contexts: { csp: report },
-  //   });
-  // }
+  // Forward script-src violations to Sentry — these are the most likely
+  // indicator of an actual XSS attempt rather than a benign misconfiguration.
+  const directive = report["violated-directive"] || report["effective-directive"] || "";
+  if (directive.includes("script")) {
+    await captureMessage("CSP script violation", { csp: report });
+  }
 
   res.status(204).send();
 });

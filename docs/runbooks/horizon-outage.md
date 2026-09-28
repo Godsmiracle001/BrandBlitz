@@ -13,7 +13,7 @@ One or more of:
 ## Impact
 
 | Component | Effect |
-|---|---|
+| --- | --- |
 | Challenge payouts | **Blocked** — BullMQ jobs retry with exponential backoff; recipients are not paid until Horizon recovers |
 | Balance checks | **Degraded** — hot-wallet balance reads fail; deposit monitoring halted |
 | New challenges | **Unaffected** if Horizon is only used post-game |
@@ -47,6 +47,7 @@ docker compose logs api --tail=100 | grep -i "horizon\|stellar\|payout"
 2. If Horizon is degraded (slow, not down), enable the Soroban RPC fallback if implemented, or reduce payout batch size via `MAX_OPS_PER_TX` env override to lower per-request load.
 
 3. If Horizon has been down > 15 min and jobs are exhausting retries, pause the payout queue to prevent DLQ fill:
+
    ```bash
    redis-cli LPUSH bull:payout:commands '{"cmd":"pause"}'
    # or use the BullMQ admin UI
@@ -56,14 +57,16 @@ docker compose logs api --tail=100 | grep -i "horizon\|stellar\|payout"
 
 ## Remediation
 
-1. Wait for Stellar Foundation to restore Horizon (monitor https://status.stellar.org).
+1. Wait for Stellar Foundation to restore Horizon (monitor <https://status.stellar.org>).
 
 2. Once healthy, resume the payout queue:
+
    ```bash
    redis-cli LPUSH bull:payout:commands '{"cmd":"resume"}'
    ```
 
 3. Retry failed payout jobs from the DLQ:
+
    ```bash
    # Move all failed jobs back to waiting
    # (use BullMQ admin UI or bull-board, or write a one-off script)

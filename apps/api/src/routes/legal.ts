@@ -9,12 +9,35 @@ import {
   findUserLegalAcceptance,
   getAcceptedVersions,
 } from "../db/queries/legal";
+import {
+  GDPR_ERASURE_ACTION,
+  GDPR_ERASURE_CLEARED_COLUMNS,
+} from "../db/queries/gdpr";
 
 const router = Router();
+
+const ERASURE_GRACE_PERIOD_DAYS = 30;
 
 const AcceptSchema = z.object({
   type: z.enum(["tos", "privacy"]),
   version: z.string().min(1),
+});
+
+/**
+ * GET /legal/erasure
+ * Public GDPR right-to-erasure manifest: the exhaustive list of table.columns
+ * that a completed erasure clears. Kept in sync with the erasure worker via the
+ * shared GDPR_ERASURE_CLEARED_COLUMNS constant so the disclosure never drifts
+ * from what is actually anonymised (includes game_sessions.device_id).
+ */
+router.get("/erasure", (_req, res) => {
+  res.json({
+    erasure: {
+      action: GDPR_ERASURE_ACTION,
+      gracePeriodDays: ERASURE_GRACE_PERIOD_DAYS,
+      clearedColumns: GDPR_ERASURE_CLEARED_COLUMNS,
+    },
+  });
 });
 
 /**
@@ -45,6 +68,16 @@ router.get("/:type/:version", async (req, res) => {
  */
 router.post("/accept", authenticate, async (req, res) => {
   const { type, version } = AcceptSchema.parse(req.body);
+
+  const current = await getCurrentLegalDocument(type);
+  if (current && current.version !== version) {
+    throw createError(
+      `Version mismatch: current ${type} version is ${current.version}`,
+      400,
+      "LEGAL_VERSION_MISMATCH"
+    );
+  }
+
   const ip = req.ip ?? req.socket.remoteAddress ?? "";
   const acceptance = await recordUserLegalAcceptance(req.user!.sub, type, version, ip);
   res.status(201).json({ acceptance });

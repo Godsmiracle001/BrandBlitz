@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { SessionRecoveryModal } from "./session-recovery-modal";
 
 describe("SessionRecoveryModal", () => {
-  it("calls resume and forfeit actions for interrupted sessions", () => {
+  it("calls resume directly and requires confirmation before forfeiting", () => {
     const onResume = vi.fn();
     const onForfeit = vi.fn();
 
@@ -20,9 +20,15 @@ describe("SessionRecoveryModal", () => {
     expect(screen.getByText("17s")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /resume/i }));
-    fireEvent.click(screen.getByRole("button", { name: /forfeit/i }));
-
     expect(onResume).toHaveBeenCalledTimes(1);
+
+    // Initial click on forfeit shows confirmation step
+    fireEvent.click(screen.getByRole("button", { name: /forfeit/i }));
+    expect(onForfeit).not.toHaveBeenCalled();
+    expect(screen.getByText(/Are you sure you want to forfeit\? Your current score and progress will be lost\./i)).toBeInTheDocument();
+
+    // Confirm forfeit executes onForfeit
+    fireEvent.click(screen.getByRole("button", { name: /confirm forfeit/i }));
     expect(onForfeit).toHaveBeenCalledTimes(1);
   });
 

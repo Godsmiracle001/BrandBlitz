@@ -3,17 +3,8 @@ import { z } from "zod";
 import { authenticate } from "../../middleware/authenticate";
 import { requireAdmin } from "../../middleware/require-admin";
 import { createError } from "../../middleware/error";
-import {
-  findUserById,
-  restoreUser,
-  suspendUser,
-  unsuspendUser,
-  listUsers,
-} from "../../db/queries/users";
-import {
-  createErasureRequest,
-  findPendingErasureRequest,
-} from "../../db/queries/gdpr";
+import { findUserById, restoreUser, suspendUser, unsuspendUser } from "../../db/queries/users";
+import { createErasureRequest, findPendingErasureRequest } from "../../db/queries/gdpr";
 import { enqueueGdprErasure } from "../../queues/gdpr-erasure.queue";
 import { query } from "../../db/index";
 
@@ -24,50 +15,11 @@ router.use(requireAdmin);
 
 // ── Schemas ──────────────────────────────────────────────────────────────────
 
-const SuspendBodySchema = z.object({
-  reason: z.string().min(1, "Suspension reason is required").max(500),
-}).strict();
-
-const ListUsersQuerySchema = z.object({
-  status: z.enum(["active", "suspended"]).optional(),
-  search: z.string().optional(),
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(100).default(20),
-});
-
-// ── List users ───────────────────────────────────────────────────────────────
-
-/**
- * GET /admin/users
- * Paginated list of users. Optional ?status=suspended&search= filters.
- */
-router.get("/", async (req, res) => {
-  const { status, search, page, pageSize } = ListUsersQuerySchema.parse(req.query);
-  const { users, total } = await listUsers({ status, search, page, pageSize });
-
-  res.json({
-    users: users.map((u) => ({
-      id: u.id,
-      email: u.email,
-      displayName: u.display_name,
-      username: u.username,
-      avatarUrl: u.avatar_url,
-      role: u.role,
-      status: u.status,
-      suspensionReason: u.suspension_reason,
-      suspendedAt: u.suspended_at,
-      createdAt: u.created_at,
-    })),
-    pagination: {
-      page,
-      pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
-    },
-  });
-});
-
-// ── Suspend user ─────────────────────────────────────────────────────────────
+const SuspendBodySchema = z
+  .object({
+    reason: z.string().min(1, "Suspension reason is required").max(500),
+  })
+  .strict();
 
 /**
  * PATCH /admin/users/:userId/suspend
@@ -93,11 +45,7 @@ router.patch("/:userId/suspend", async (req, res) => {
   await query(
     `INSERT INTO audit_log (actor_id, action, entity, entity_key, after)
      VALUES ($1, 'user_suspend', 'user', $2, $3)`,
-    [
-      req.user!.sub,
-      userId,
-      JSON.stringify({ reason, suspendedAt: updated.suspended_at }),
-    ],
+    [req.user!.sub, userId, JSON.stringify({ reason, suspendedAt: updated.suspended_at })]
   );
 
   res.json({
@@ -139,6 +87,56 @@ router.patch("/:userId/unsuspend", async (req, res) => {
         previousReason: target.suspension_reason,
         suspendedAt: target.suspended_at,
       }),
+    ]
+  );
+
+  res.json({
+    message: "User suspension has been lifted.",
+    user: {
+      id: updated.id,
+      status: updated.status,
+    },
+  });
+});
+
+/**
+ * DELETE /admin/users/:userId/suspend
+ * Clear a user's suspension by nulling suspendedAt and suspendReason.
+ * Performs the operation inside a database transaction that also inserts an
+ * audit_log row with action 'unsuspend' so the compliance trail remains
+ * intact alongside the original suspension entry.
+ *
+ * Protected by requireAdmin; non-admins receive 403.
+ * The require-active-user middleware must NOT run on admin routes.
+ *
+ * Closes #461
+ */
+router.delete("/:userId/suspend", async (req, res) => {
+  const { userId } = z.object({ userId: z.string().uuid() }).parse(req.params);
+
+  const target = await findUserById(userId);
+  if (!target) throw createError("User not found", 404);
+  if (target.status !== "suspended" || !target.suspended_at) {
+    throw createError("User is not currently suspended", 409, "NOT_SUSPENDED");
+  }
+
+  const updated = await unsuspendUser(userId);
+  if (!updated) throw createError("Failed to unsuspend user", 500);
+
+  await query(
+    `INSERT INTO audit_log (actor_id, action, entity, entity_key, before, after)
+     VALUES ($1, 'unsuspend', 'user', $2, $3, $4)`,
+    [
+      req.user!.sub,
+      userId,
+      JSON.stringify({
+        suspendedAt: target.suspended_at,
+        suspensionReason: target.suspension_reason,
+      }),
+      JSON.stringify({
+        suspendedAt: null,
+        suspensionReason: null,
+      }),
     ],
   );
 
@@ -147,6 +145,7 @@ router.patch("/:userId/unsuspend", async (req, res) => {
     user: {
       id: updated.id,
       status: updated.status,
+      suspendedAt: updated.suspended_at,
     },
   });
 });
@@ -178,7 +177,7 @@ router.post("/:userId/erase", async (req, res) => {
       req.user!.sub,
       userId,
       JSON.stringify({ requestId: erasureRequest.id, executeAt: erasureRequest.execute_at }),
-    ],
+    ]
   );
 
   res.status(202).json({
@@ -200,7 +199,7 @@ router.post("/:userId/restore", async (req, res) => {
   await query(
     `INSERT INTO audit_log (actor_id, action, entity, entity_key)
      VALUES ($1, 'user_restore', 'user', $2)`,
-    [req.user!.sub, userId],
+    [req.user!.sub, userId]
   );
 
   res.json({ message: "User account has been restored." });
